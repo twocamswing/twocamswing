@@ -1,6 +1,8 @@
 import Foundation
 import MultipeerConnectivity
 
+enum Role { case advertiser, browser }
+
 final class MPCSignaler: NSObject {
     private let serviceType = "webrtc-signal"
     private let peerID = MCPeerID(displayName: UIDevice.current.name)
@@ -9,49 +11,73 @@ final class MPCSignaler: NSObject {
         s.delegate = self
         return s
     }()
-    private lazy var advertiser: MCNearbyServiceAdvertiser = {
-        let adv = MCNearbyServiceAdvertiser(peer: peerID, discoveryInfo: nil, serviceType: serviceType)
-        adv.delegate = self
-        return adv
-    }()
-    private lazy var browser: MCNearbyServiceBrowser = {
-        let b = MCNearbyServiceBrowser(peer: peerID, serviceType: serviceType)
-        b.delegate = self
-        return b
-    }()
 
+    private var advertiser: MCNearbyServiceAdvertiser?
+    private var browser: MCNearbyServiceBrowser?
+
+    // Outbox buffers messages until MPC is connected
+    private var outbox: [Data] = []
+
+    // Callbacks
     var onMessage: ((SignalMessage) -> Void)?
+    var onConnected: (() -> Void)?
 
-    override init() {
+    init(role: Role) {
         super.init()
-        advertiser.startAdvertisingPeer()
-        browser.startBrowsingForPeers()
+        switch role {
+        case .advertiser:
+            let adv = MCNearbyServiceAdvertiser(peer: peerID, discoveryInfo: nil, serviceType: serviceType)
+            adv.delegate = self
+            adv.startAdvertisingPeer()
+            advertiser = adv
+        case .browser:
+            let b = MCNearbyServiceBrowser(peer: peerID, serviceType: serviceType)
+            b.delegate = self
+            b.startBrowsingForPeers()
+            browser = b
+        }
     }
 
     func send(_ message: SignalMessage) {
-        if let data = try? JSONEncoder().encode(message) {
-            print("MPC → sending: \(message.type)")
-            try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+        guard let data = try? JSONEncoder().encode(message) else {
+            print("MPC send: failed to encode \(message.type)")
+            return
         }
+        let json = String(data: data, encoding: .utf8) ?? ""
+        print("MPC → enqueue/send: \(json)")
+
+        if session.connectedPeers.isEmpty {
+            // buffer until connected
+            outbox.append(data)
+            return
+        }
+        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+    }
+
+    private func flushOutboxIfNeeded() {
+        guard !session.connectedPeers.isEmpty, !outbox.isEmpty else { return }
+        let peers = session.connectedPeers
+        for data in outbox {
+            try? session.send(data, toPeers: peers, with: .reliable)
+        }
+        outbox.removeAll()
     }
 }
 
 extension MPCSignaler: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
-        let stateName: String
-        switch state {
-        case .notConnected: stateName = "not connected"
-        case .connecting: stateName = "connecting"
-        case .connected: stateName = "connected"
-        @unknown default: stateName = "unknown"
+        let name: String
+        switch state { case .notConnected: name = "not connected"; case .connecting: name = "connecting"; case .connected: name = "connected"; @unknown default: name = "unknown" }
+        print("MPC: \(peerID.displayName) → \(name)")
+        if state == .connected {
+            flushOutboxIfNeeded()
+            onConnected?()
         }
-        print("MPC: \(peerID.displayName) → \(stateName)")
     }
-
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         if let msg = try? JSONDecoder().decode(SignalMessage.self, from: data) {
-            print("MPC ← received: \(msg.type)")
+            print("MPC ← received: \(msg.type) | from: \(peerID.displayName) | sdp:\(msg.sdp ?? "nil") | cand:\(msg.candidate ?? "nil")")
             DispatchQueue.main.async { self.onMessage?(msg) }
         }
     }
@@ -76,7 +102,5 @@ extension MPCSignaler: MCNearbyServiceBrowserDelegate {
         print("MPC: found peer \(peerID.displayName)")
         browser.invitePeer(peerID, to: session, withContext: nil, timeout: 10)
     }
-
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {}
 }
-
