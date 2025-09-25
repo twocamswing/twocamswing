@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CE468E9E2E8426EB00F48D07 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = CE468E9D2E8426EB00F48D07 /* WebRTC */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		CEF7D5142E83EAA700A43BC7 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -65,6 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CE468E9E2E8426EB00F48D07 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +90,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0AC61DB788565B2E362AB06A /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
 		CEF7D4F42E83EAA600A43BC7 = {
 			isa = PBXGroup;
 			children = (
@@ -92,6 +104,7 @@
 				CEF7D5162E83EAA700A43BC7 /* GolfSwingRTCTests */,
 				CEF7D5202E83EAA700A43BC7 /* GolfSwingRTCUITests */,
 				CEF7D4FE2E83EAA600A43BC7 /* Products */,
+				0AC61DB788565B2E362AB06A /* Pods */,
 			);
 			sourceTree = "<group>";
 		};
@@ -124,8 +137,6 @@
 				CEF7D4FF2E83EAA600A43BC7 /* GolfSwingRTC */,
 			);
 			name = GolfSwingRTC;
-			packageProductDependencies = (
-			);
 			productName = GolfSwingRTC;
 			productReference = CEF7D4FD2E83EAA600A43BC7 /* GolfSwingRTC.app */;
 			productType = "com.apple.product-type.application";
@@ -147,8 +158,6 @@
 				CEF7D5162E83EAA700A43BC7 /* GolfSwingRTCTests */,
 			);
 			name = GolfSwingRTCTests;
-			packageProductDependencies = (
-			);
 			productName = GolfSwingRTCTests;
 			productReference = CEF7D5132E83EAA700A43BC7 /* GolfSwingRTCTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -170,8 +179,6 @@
 				CEF7D5202E83EAA700A43BC7 /* GolfSwingRTCUITests */,
 			);
 			name = GolfSwingRTCUITests;
-			packageProductDependencies = (
-			);
 			productName = GolfSwingRTCUITests;
 			productReference = CEF7D51D2E83EAA700A43BC7 /* GolfSwingRTCUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -208,6 +215,9 @@
 			);
 			mainGroup = CEF7D4F42E83EAA600A43BC7;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CE468E9C2E8426EB00F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CEF7D4FE2E83EAA600A43BC7 /* Products */;
 			projectDirPath = "";
@@ -297,6 +307,7 @@
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -329,6 +340,7 @@
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -591,6 +603,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CE468E9C2E8426EB00F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 140.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CE468E9D2E8426EB00F48D07 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CE468E9C2E8426EB00F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CEF7D4F52E83EAA600A43BC7 /* Project object */;
 }

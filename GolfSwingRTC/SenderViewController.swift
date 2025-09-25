@@ -1,55 +1,54 @@
 import UIKit
-import WebRTC
 import AVFoundation
+import WebRTC
 
-final class SenderViewController: UIViewController {
+final class SenderViewController: UIViewController, RTCPeerConnectionDelegate {
+
+    // MARK: - WebRTC
     private var factory: RTCPeerConnectionFactory!
-    private var pc: RTCPeerConnection!
+    private var peerConnection: RTCPeerConnection!
     private var videoSource: RTCVideoSource!
     private var capturer: RTCCameraVideoCapturer!
     private var localVideoTrack: RTCVideoTrack!
-    private let signaler = MPCSignaler(role: .advertiser)
-    private var preview: RTCMTLVideoView!
 
+    // MARK: - Signaling
+    private let signaler = MPCSignaler(role: .advertiser)
     private var pendingCandidates: [RTCIceCandidate] = []
-    private func applyPendingCandidates() {
-        for c in pendingCandidates { pc.add(c) }
-        pendingCandidates.removeAll()
-    }
+
+    // MARK: - UI
+    private var preview: RTCMTLVideoView!
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
         setupWebRTC()
+        setupPreview()
         setupSignaling()
         startCapture()
-        // Offer will be created automatically when MPC connects
+        makeOffer()
     }
 
+    // MARK: - Setup
+
     private func setupWebRTC() {
-        let enc = RTCDefaultVideoEncoderFactory()
-        let dec = RTCDefaultVideoDecoderFactory()
-        factory = RTCPeerConnectionFactory(encoderFactory: enc, decoderFactory: dec)
+        let encoderFactory = RTCDefaultVideoEncoderFactory()
+        let decoderFactory = RTCDefaultVideoDecoderFactory()
+        factory = RTCPeerConnectionFactory(encoderFactory: encoderFactory, decoderFactory: decoderFactory)
 
         let config = RTCConfiguration()
-        config.iceServers = []
         config.sdpSemantics = .unifiedPlan
+        config.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
 
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil,
-                                              optionalConstraints: ["DtlsSrtpKeyAgreement":"true"])
-        pc = factory.peerConnection(with: config, constraints: constraints, delegate: self)
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        peerConnection = factory.peerConnection(with: config, constraints: constraints, delegate: self)
 
-        // Local video track
         videoSource = factory.videoSource()
         capturer = RTCCameraVideoCapturer(delegate: videoSource)
         localVideoTrack = factory.videoTrack(with: videoSource, trackId: "video0")
+        _ = peerConnection.add(localVideoTrack, streamIds: ["stream0"])
+    }
 
-        // Add as transceiver BEFORE offer
-        let transceiverInit = RTCRtpTransceiverInit()
-        transceiverInit.direction = .sendOnly
-        pc.addTransceiver(with: localVideoTrack, init: transceiverInit)
-
-        // Local preview
+    private func setupPreview() {
         preview = RTCMTLVideoView(frame: view.bounds)
         preview.videoContentMode = .scaleAspectFill
         preview.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -58,85 +57,123 @@ final class SenderViewController: UIViewController {
     }
 
     private func setupSignaling() {
-        // Start offer only after MPC is connected
-        signaler.onConnected = { [weak self] in
-            print("Sender: MPC connected → creating offer")
-            self?.makeOffer()
-        }
-
         signaler.onMessage = { [weak self] msg in
             guard let self = self else { return }
+
             switch msg.type {
+
             case .answer:
-                print("Sender: got answer")
-                guard let sdpString = msg.sdp else { return }
-                let answer = RTCSessionDescription(type: .answer, sdp: sdpString)
-                self.pc.setRemoteDescription(answer) { err in
-                    print("Sender: setRemoteDescription(answer) \(err?.localizedDescription ?? "ok")")
+                guard let sdpText = msg.sdp else { return }
+                let answer = RTCSessionDescription(type: .answer, sdp: sdpText)
+                self.peerConnection.setRemoteDescription(answer) { error in
+                    if let error = error {
+                        print("Sender: failed to set remote answer: \(error)")
+                        return
+                    }
                     self.applyPendingCandidates()
                 }
+
             case .candidate:
-                print("Sender: got candidate")
-                guard let cand = msg.candidate else { return }
-                let c = RTCIceCandidate(sdp: cand,
-                                        sdpMLineIndex: msg.sdpMLineIndex ?? 0,
-                                        sdpMid: msg.sdpMid)
-                if self.pc.remoteDescription != nil { self.pc.add(c) }
-                else { self.pendingCandidates.append(c) }
-            default: break
+                guard let candSdp = msg.candidate else { return }
+                let cand = RTCIceCandidate(
+                    sdp: candSdp,
+                    sdpMLineIndex: msg.sdpMLineIndex ?? 0,
+                    sdpMid: msg.sdpMid
+                )
+                if self.peerConnection.remoteDescription != nil {
+                    self.peerConnection.add(cand)
+                    print("Sender: applied candidate")
+                } else {
+                    self.pendingCandidates.append(cand)
+                    print("Sender: queued candidate")
+                }
+
+            case .offer:
+                // sender never expects an offer
+                break
             }
         }
     }
+
+    // MARK: - Capture
 
     private func startCapture() {
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
                 guard granted else { return }
-                let device = RTCCameraVideoCapturer.captureDevices()
-                    .first(where: { $0.position == .back }) ?? RTCCameraVideoCapturer.captureDevices().first!
+                guard let device = RTCCameraVideoCapturer.captureDevices()
+                        .first(where: { $0.position == .back }) ?? RTCCameraVideoCapturer.captureDevices().first
+                else { return }
+
                 let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
-                let format = formats.sorted {
-                    CMVideoFormatDescriptionGetDimensions($0.formatDescription).width <
-                    CMVideoFormatDescriptionGetDimensions($1.formatDescription).width
-                }.last ?? formats.first!
-                let fps = Int((format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30).clamped(to: 24...60))
+                // choose the highest resolution format
+                let format = formats.max(by: {
+                    let a = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+                    let b = CMVideoFormatDescriptionGetDimensions($1.formatDescription)
+                    return (a.width * a.height) < (b.width * b.height)
+                }) ?? formats.first!
+
+                let maxFps = Int(format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30)
+                let fps = max(24, min(60, maxFps))
+
                 self.capturer.startCapture(with: device, format: format, fps: fps)
             }
         }
     }
 
+    // MARK: - Offer / ICE
+
     private func makeOffer() {
-        let constraints = RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveVideo":"false"], optionalConstraints: nil)
-        pc.offer(for: constraints) { [weak self] sdp, err in
+        let constraints = RTCMediaConstraints(
+            mandatoryConstraints: ["OfferToReceiveVideo":"false"],
+            optionalConstraints: nil
+        )
+        peerConnection.offer(for: constraints) { [weak self] sdp, err in
             guard let self = self, let sdp = sdp, err == nil else {
                 print("Sender: offer error \(String(describing: err))")
                 return
             }
-            self.pc.setLocalDescription(sdp) { err in
+            self.peerConnection.setLocalDescription(sdp) { err in
                 print("Sender: setLocalDescription(offer) \(err?.localizedDescription ?? "ok")")
             }
-            print("Sender: sending offer")
             self.signaler.send(SignalMessage.offer(sdp))
+            print("Sender: sent offer")
         }
     }
-}
 
-extension SenderViewController: RTCPeerConnectionDelegate {
-    func peerConnection(_ pc: RTCPeerConnection, didChange stateChanged: RTCSignalingState) { print("Sender: signaling → \(stateChanged.rawValue)") }
-    func peerConnection(_ pc: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
-    func peerConnection(_ pc: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
-    func peerConnectionShouldNegotiate(_ pc: RTCPeerConnection) { print("Sender: should negotiate") }
-    func peerConnection(_ pc: RTCPeerConnection, didChange newState: RTCIceConnectionState) { print("Sender: ICE state → \(newState.rawValue)") }
-    func peerConnection(_ pc: RTCPeerConnection, didChange newState: RTCIceGatheringState) { print("Sender: ICE gathering → \(newState.rawValue)") }
-    func peerConnection(_ pc: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+    private func applyPendingCandidates() {
+        for c in pendingCandidates { peerConnection.add(c) }
+        pendingCandidates.removeAll()
+    }
+
+    // MARK: - RTCPeerConnectionDelegate
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
+        print("Sender: signaling → \(stateChanged.rawValue)")
+    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
+
+    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {
+        print("Sender: should negotiate")
+    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        print("Sender: ICE state → \(newState.rawValue)")
+    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        print("Sender: ICE gathering → \(newState.rawValue)")
+    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         print("Sender: generated candidate")
         signaler.send(SignalMessage.candidate(candidate))
     }
-    func peerConnection(_ pc: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ pc: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
-}
 
-fileprivate extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
-}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
 
+    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
+}
