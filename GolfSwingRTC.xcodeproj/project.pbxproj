@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		CE468E9E2E8426EB00F48D07 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = CE468E9D2E8426EB00F48D07 /* WebRTC */; };
+		CE468ECB2E87DA5100F48D07 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = CE468ECA2E87DA5100F48D07 /* WebRTC */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,7 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				CE468E9E2E8426EB00F48D07 /* WebRTC in Frameworks */,
+				CE468ECB2E87DA5100F48D07 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -137,6 +137,9 @@
 				CEF7D4FF2E83EAA600A43BC7 /* GolfSwingRTC */,
 			);
 			name = GolfSwingRTC;
+			packageProductDependencies = (
+				CE468ECA2E87DA5100F48D07 /* WebRTC */,
+			);
 			productName = GolfSwingRTC;
 			productReference = CEF7D4FD2E83EAA600A43BC7 /* GolfSwingRTC.app */;
 			productType = "com.apple.product-type.application";
@@ -216,7 +219,7 @@
 			mainGroup = CEF7D4F42E83EAA600A43BC7;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				CE468E9C2E8426EB00F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */,
+				CE468EC92E87DA5100F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CEF7D4FE2E83EAA600A43BC7 /* Products */;
@@ -605,7 +608,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		CE468E9C2E8426EB00F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+		CE468EC92E87DA5100F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/stasel/WebRTC";
 			requirement = {
@@ -616,9 +619,9 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		CE468E9D2E8426EB00F48D07 /* WebRTC */ = {
+		CE468ECA2E87DA5100F48D07 /* WebRTC */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = CE468E9C2E8426EB00F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			package = CE468EC92E87DA5100F48D07 /* XCRemoteSwiftPackageReference "WebRTC" */;
 			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */

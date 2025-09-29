@@ -1,0 +1,74 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildOnly"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "f1aa3c6e83b27894a88b8645efa7253a272d51274cabdc8a88e01269734a1544"
+    }
+  ],
+  "containerPath" : "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC.xcworkspace",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "activeArchitecture" : "arm64",
+    "activeRunDestination" : {
+      "disableOnlyActiveArch" : false,
+      "platform" : "iphoneos",
+      "sdk" : "iphoneos26.0",
+      "sdkVariant" : "iphoneos",
+      "supportedArchitectures" : [
+        "arm64v8",
+        "arm64",
+        "armv8"
+      ],
+      "targetArchitecture" : "arm64"
+    },
+    "arenaInfo" : {
+      "buildIntermediatesPath" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex",
+      "buildProductsPath" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Products",
+      "derivedDataPath" : "/Users/user/Solutions/GolfSwingRTC/DerivedData",
+      "indexDataStoreFolderPath" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Index.noindex/DataStore",
+      "indexEnableDataStore" : true,
+      "indexPCHPath" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Index.noindex/PrecompiledHeaders",
+      "pchPath" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/PrecompiledHeaders"
+    },
+    "configurationName" : "Debug",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ACTION" : "build",
+          "ASSETCATALOG_FILTER_FOR_DEVICE_MODEL" : "iPhone8,4",
+          "ASSETCATALOG_FILTER_FOR_DEVICE_OS_VERSION" : "15.8.5",
+          "ASSETCATALOG_FILTER_FOR_THINNING_DEVICE_CONFIGURATION" : "iPhone8,4",
+          "BUILD_ACTIVE_RESOURCES_ONLY" : "YES",
+          "CLANG_COVERAGE_MAPPING" : "YES",
+          "CLANG_PROFILE_DATA_DIRECTORY" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/ProfileData",
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "YES",
+          "ONLY_ACTIVE_ARCH" : "YES",
+          "TARGET_DEVICE_IDENTIFIER" : "4bfc83fa95bf616526d1e5ef203738504c74b4eb",
+          "TARGET_DEVICE_MODEL" : "iPhone8,4",
+          "TARGET_DEVICE_OS_VERSION" : "15.8.5",
+          "TARGET_DEVICE_PLATFORM_NAME" : "iphoneos"
+        }
+      }
+    }
+  },
+  "schemeCommand" : "launch",
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : true,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

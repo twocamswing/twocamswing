@@ -1,0 +1,51 @@
+{
+  "" : {
+    "const-values" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.swiftconstvalues",
+    "dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.d",
+    "diagnostics" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.dia",
+    "emit-module-dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary-emit-module.dia",
+    "pch" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.swiftdeps"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GeneratedAssetSymbols.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/AppDelegate.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/AppDelegate.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/AppDelegate.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/AppDelegate.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/MPCSignaler.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/MPCSignaler.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/MPCSignaler.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/MPCSignaler.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/ReceiverViewController.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/ReceiverViewController.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/ReceiverViewController.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/ReceiverViewController.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/RootViewController.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/RootViewController.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/RootViewController.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/RootViewController.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/SceneDelegate.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SceneDelegate.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SceneDelegate.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SceneDelegate.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/SenderViewController.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SenderViewController.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SenderViewController.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SenderViewController.o"
+  },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/SignalMessage.swift" : {
+    "index-unit-output-path" : "/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SignalMessage.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SignalMessage.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/SignalMessage.o"
+  }
+}

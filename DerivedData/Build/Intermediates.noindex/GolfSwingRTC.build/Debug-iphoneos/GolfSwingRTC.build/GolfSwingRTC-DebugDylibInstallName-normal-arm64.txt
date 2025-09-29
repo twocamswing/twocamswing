@@ -1,0 +1,1 @@
+@rpath/GolfSwingRTC.debug.dylib

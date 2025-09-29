@@ -1,0 +1,12 @@
+{
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/AppDelegate.swift" : {
+    "abi-baseline-json" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC.abi.json",
+    "const-values" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.swiftconstvalues",
+    "dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.d",
+    "diagnostics" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-primary.dia",
+    "objc-header" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC-Swift.h",
+    "swiftdoc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC.swiftdoc",
+    "swiftmodule" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC.swiftmodule",
+    "swiftsourceinfo" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/ArchiveIntermediates/GolfSwingRTC/IntermediateBuildFilesPath/GolfSwingRTC.build/Release-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/GolfSwingRTC.swiftsourceinfo"
+  }
+}

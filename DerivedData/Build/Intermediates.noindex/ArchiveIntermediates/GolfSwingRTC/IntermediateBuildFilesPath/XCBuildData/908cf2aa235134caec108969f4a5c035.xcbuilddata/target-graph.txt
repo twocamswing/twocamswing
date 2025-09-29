@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'GolfSwingRTC' in project 'GolfSwingRTC'
+➜ Explicit dependency on target 'WebRTC' in project 'WebRTC'
+Target 'WebRTC' in project 'WebRTC' (no dependencies)

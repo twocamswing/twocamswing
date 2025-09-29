@@ -24,17 +24,23 @@ final class MPCSignaler: NSObject {
 
     init(role: Role) {
         super.init()
+        print("MPC: Initializing MPCSignaler as \(role) with peer ID: \(peerID.displayName)")
+
         switch role {
         case .advertiser:
+            print("MPC: Starting as ADVERTISER for service type: \(serviceType)")
             let adv = MCNearbyServiceAdvertiser(peer: peerID, discoveryInfo: nil, serviceType: serviceType)
             adv.delegate = self
             adv.startAdvertisingPeer()
             advertiser = adv
+            print("MPC: Advertiser started, waiting for browsers...")
         case .browser:
+            print("MPC: Starting as BROWSER for service type: \(serviceType)")
             let b = MCNearbyServiceBrowser(peer: peerID, serviceType: serviceType)
             b.delegate = self
             b.startBrowsingForPeers()
             browser = b
+            print("MPC: Browser started, searching for advertisers...")
         }
     }
 
@@ -44,22 +50,47 @@ final class MPCSignaler: NSObject {
             return
         }
         let json = String(data: data, encoding: .utf8) ?? ""
-        print("MPC → enqueue/send: \(json)")
 
         if session.connectedPeers.isEmpty {
-            // buffer until connected
+            print("MPC → QUEUED (no peers): \(json.prefix(200))...")
             outbox.append(data)
+            print("MPC: Outbox size now: \(outbox.count)")
             return
         }
-        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+
+        print("MPC → SEND to \(session.connectedPeers.count) peers: \(json.prefix(200))...")
+        do {
+            try session.send(data, toPeers: session.connectedPeers, with: .reliable)
+            print("MPC: Message sent successfully to peers: \(session.connectedPeers.map { $0.displayName })")
+        } catch {
+            print("MPC: Failed to send message: \(error)")
+        }
     }
 
     private func flushOutboxIfNeeded() {
-        guard !session.connectedPeers.isEmpty, !outbox.isEmpty else { return }
-        let peers = session.connectedPeers
-        for data in outbox {
-            try? session.send(data, toPeers: peers, with: .reliable)
+        guard !session.connectedPeers.isEmpty, !outbox.isEmpty else {
+            if session.connectedPeers.isEmpty {
+                print("MPC: Cannot flush outbox - no connected peers")
+            } else {
+                print("MPC: Outbox is empty, nothing to flush")
+            }
+            return
         }
+
+        let peers = session.connectedPeers
+        print("MPC: Flushing \(outbox.count) queued messages to \(peers.count) peers...")
+
+        var successCount = 0
+        for (index, data) in outbox.enumerated() {
+            do {
+                try session.send(data, toPeers: peers, with: .reliable)
+                successCount += 1
+            } catch {
+                print("MPC: Failed to flush message \(index): \(error)")
+            }
+        }
+
+        print("MPC: Successfully flushed \(successCount)/\(outbox.count) messages")
         outbox.removeAll()
     }
 }
@@ -67,18 +98,46 @@ final class MPCSignaler: NSObject {
 extension MPCSignaler: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         let name: String
-        switch state { case .notConnected: name = "not connected"; case .connecting: name = "connecting"; case .connected: name = "connected"; @unknown default: name = "unknown" }
-        print("MPC: \(peerID.displayName) → \(name)")
+        switch state {
+        case .notConnected: name = "not connected"
+        case .connecting: name = "connecting"
+        case .connected: name = "connected"
+        @unknown default: name = "unknown(\(state.rawValue))"
+        }
+        print("MPC: \(peerID.displayName) → \(name) (rawValue: \(state.rawValue))")
+        print("MPC: Session connected peers count: \(session.connectedPeers.count)")
+        print("MPC: All connected peers: \(session.connectedPeers.map { $0.displayName })")
+
         if state == .connected {
+            print("MPC: Peer \(peerID.displayName) connected, flushing outbox...")
             flushOutboxIfNeeded()
             onConnected?()
+        } else if state == .notConnected {
+            print("MPC: Peer \(peerID.displayName) disconnected! Reason unknown.")
         }
     }
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        if let msg = try? JSONDecoder().decode(SignalMessage.self, from: data) {
-            print("MPC ← received: \(msg.type) | from: \(peerID.displayName) | sdp:\(msg.sdp ?? "nil") | cand:\(msg.candidate ?? "nil")")
-            DispatchQueue.main.async { self.onMessage?(msg) }
+        print("MPC: Received \(data.count) bytes from \(peerID.displayName)")
+
+        guard let msg = try? JSONDecoder().decode(SignalMessage.self, from: data) else {
+            print("MPC: ERROR - Failed to decode message from \(peerID.displayName)")
+            return
+        }
+
+        let logMsg = switch msg {
+        case .offer(let sdp):
+            "offer | sdp: \(sdp.prefix(50))..."
+        case .answer(let sdp):
+            "answer | sdp: \(sdp.prefix(50))..."
+        case .candidate(let cand, _, _):
+            "candidate | cand: \(cand.prefix(50))..."
+        }
+        print("MPC ← received: \(logMsg) | from: \(peerID.displayName)")
+
+        DispatchQueue.main.async {
+            print("MPC: Dispatching \(msg.type) message to main queue")
+            self.onMessage?(msg)
         }
     }
 
