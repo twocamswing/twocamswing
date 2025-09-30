@@ -4,12 +4,31 @@ import MultipeerConnectivity
 import Foundation
 
 class DebugVideoRenderer: NSObject, RTCVideoRenderer {
+    private var frameCount = 0
+    private var lastFrameTime = Date()
+    private var lastLogTime = Date()
+
     func setSize(_ size: CGSize) {
-        print("DebugRenderer: setSize called with \(size)")
+        debugVideo("DebugRenderer setSize: \(size)")
     }
 
     func renderFrame(_ frame: RTCVideoFrame?) {
-        print("DebugRenderer: renderFrame called with frame size: \(frame?.width ?? 0)x\(frame?.height ?? 0)")
+        frameCount += 1
+        let now = Date()
+
+        // Log every 30 frames to avoid spam
+        if frameCount % 30 == 0 || now.timeIntervalSince(lastLogTime) > 2.0 {
+            let fps = 30.0 / now.timeIntervalSince(lastFrameTime)
+            debugFrame("DebugRenderer frame #\(frameCount): \(frame?.width ?? 0)x\(frame?.height ?? 0) @ \(String(format: "%.1f", fps))fps")
+            lastFrameTime = now
+            lastLogTime = now
+        }
+
+        // Critical: Check for frame freeze
+        let timeSinceLastFrame = now.timeIntervalSince(lastFrameTime)
+        if timeSinceLastFrame > 3.0 {
+            debugCritical("DebugRenderer: Frame delivery STOPPED! \(String(format: "%.1f", timeSinceLastFrame))s since last frame")
+        }
     }
 }
 
@@ -20,11 +39,18 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     private let signaler = MPCSignaler(role: .browser)   // use .browser role
     private let debugRenderer = DebugVideoRenderer()
 
+    // Statistics tracking
+    private var statsTimer: Timer?
+    private var lastStatsTime = Date()
+    private var bytesReceivedLastCheck: UInt64 = 0
+    private var packetsReceivedLastCheck: UInt32 = 0
+
     override func viewDidLoad() {
         super.viewDidLoad()
         setupVideoView()
         setupPeerConnection()
         setupSignaler()
+        startStatsMonitoring()
     }
 
     private func setupVideoView() {
@@ -34,10 +60,51 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         remoteVideoView.backgroundColor = .red // Temporary debug color
         view.addSubview(remoteVideoView)
 
-        print("Receiver: setupVideoView completed - frame: \(remoteVideoView.frame)")
-        print("Receiver: Video view added to superview: \(remoteVideoView.superview != nil)")
-        print("Receiver: Device screen bounds: \(UIScreen.main.bounds)")
-        print("Receiver: Device scale: \(UIScreen.main.scale)")
+        debugVideo("setupVideoView completed - frame: \(remoteVideoView.frame)")
+        debugVideo("Video view added to superview: \(remoteVideoView.superview != nil)")
+        debugVideo("Device screen bounds: \(UIScreen.main.bounds)")
+        debugVideo("Device scale: \(UIScreen.main.scale)")
+
+        // Add render diagnostics
+        setupVideoViewDiagnostics()
+    }
+
+    private func setupVideoViewDiagnostics() {
+        // Monitor video view rendering state periodically
+        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            self.logVideoViewState()
+        }
+    }
+
+    private func logVideoViewState() {
+        debugVideo("=== VIDEO VIEW STATE ===")
+        debugVideo("Frame: \(remoteVideoView.frame)")
+        debugVideo("Bounds: \(remoteVideoView.bounds)")
+        debugVideo("Hidden: \(remoteVideoView.isHidden)")
+        debugVideo("Alpha: \(remoteVideoView.alpha)")
+        debugVideo("Transform: \(remoteVideoView.transform)")
+        debugVideo("SuperView: \(remoteVideoView.superview != nil)")
+        debugVideo("Background: \(remoteVideoView.backgroundColor?.description ?? "nil")")
+        debugVideo("Content mode: \(remoteVideoView.videoContentMode.rawValue)")
+
+        // Check view hierarchy
+        if let superview = remoteVideoView.superview {
+            debugVideo("In view hierarchy - superview bounds: \(superview.bounds)")
+            debugVideo("Subview index: \(superview.subviews.firstIndex(of: remoteVideoView) ?? -1)")
+            debugVideo("Total subviews: \(superview.subviews.count)")
+        }
+
+        // Force a layout update and check for changes
+        let oldFrame = remoteVideoView.frame
+        remoteVideoView.setNeedsLayout()
+        remoteVideoView.layoutIfNeeded()
+        if oldFrame != remoteVideoView.frame {
+            debugVideo("Layout caused frame change: \(oldFrame) → \(remoteVideoView.frame)")
+        }
     }
 
     private func setupPeerConnection() {
@@ -66,6 +133,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
             case .offer(let sdpText):
                 print("Receiver: Received offer SDP contains video: \(sdpText.contains("m=video"))")
                 print("Receiver: Received offer SDP video lines: \(sdpText.components(separatedBy: "\n").filter { $0.contains("video") }.count)")
+
+                // Only handle offers that contain video - ignore initial empty offers
+                if !sdpText.contains("m=video") {
+                    print("Receiver: Ignoring offer without video track - waiting for renegotiation with video")
+                    return
+                }
+
+                print("Receiver: Processing offer with video track")
                 let offer = RTCSessionDescription(type: .offer, sdp: sdpText)
                 self.peerConnection.setRemoteDescription(offer) { error in
                     if let error = error {
@@ -185,46 +260,212 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         print("Receiver: rtpReceiver parameters: \(rtpReceiver.parameters)")
 
         if let track = rtpReceiver.track as? RTCVideoTrack {
-            print("Receiver: Video track found, attaching to view...")
+            debugVideo("Video track found, attaching to view...")
             let workItem = DispatchWorkItem {
-                print("Receiver: On main queue, video view frame: \(self.remoteVideoView.frame)")
-                print("Receiver: Video view superview: \(self.remoteVideoView.superview != nil)")
-                print("Receiver: Track is enabled: \(track.isEnabled)")
+                debugVideo("On main queue, video view frame: \(self.remoteVideoView.frame)")
+                debugVideo("Video view superview: \(self.remoteVideoView.superview != nil)")
+                debugVideo("Track is enabled: \(track.isEnabled)")
 
+                // Track attachment with detailed logging
+                debugVideo("Attaching track to RTCMTLVideoView...")
                 track.add(self.remoteVideoView)
+                debugVideo("RTCMTLVideoView attachment completed")
+
+                debugVideo("Attaching track to debug renderer...")
                 track.add(self.debugRenderer)
-                print("Receiver: Video track attached successfully")
-                print("Receiver: Debug renderer also attached")
-                print("Receiver: Video track state: enabled=\(track.isEnabled) readyState=\(track.readyState.rawValue)")
+                debugVideo("Debug renderer attachment completed")
 
-                // Test if the debug renderer is actually called
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    print("Receiver: Testing if debug renderer gets called - checking track stats...")
-                    print("Receiver: Track enabled after 3s: \(track.isEnabled)")
-                    print("Receiver: Track ready state after 3s: \(track.readyState.rawValue)")
+                debugVideo("Video track state: enabled=\(track.isEnabled) readyState=\(track.readyState.rawValue)")
 
-                    // Try to manually trigger a debug call
-                    self.debugRenderer.setSize(CGSize(width: 100, height: 100))
-                    print("Receiver: Manual debug renderer setSize called")
-                }
+                // Monitor video track state changes
+                self.startVideoTrackMonitoring(track: track)
 
-                // Force a layout update after a short delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    print("Receiver: Forcing video view layout update...")
-                    self.remoteVideoView.setNeedsDisplay()
-                    self.view.setNeedsLayout()
-                }
-
-                // Force video view to front and refresh
+                // Force video view to front and refresh with detailed logging
+                debugVideo("Bringing video view to front...")
                 self.remoteVideoView.setNeedsLayout()
                 self.remoteVideoView.layoutIfNeeded()
                 self.view.bringSubviewToFront(self.remoteVideoView)
+                debugVideo("Video view layout and positioning completed")
 
-                print("Receiver: Video view brought to front and refreshed")
+                // Test track attachment after delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    self.testVideoTrackAttachment(track: track)
+                }
             }
             DispatchQueue.main.async(execute: workItem)
         } else {
-            print("Receiver: No video track found in rtpReceiver")
+            debugCritical("No video track found in rtpReceiver!")
+        }
+    }
+
+    private func startVideoTrackMonitoring(track: RTCVideoTrack) {
+        Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self, weak track] timer in
+            guard let self = self, let track = track else {
+                timer.invalidate()
+                return
+            }
+
+            debugVideo("=== VIDEO TRACK STATE ===")
+            debugVideo("Track enabled: \(track.isEnabled)")
+            debugVideo("Track ready state: \(track.readyState.rawValue)")
+            debugVideo("Track kind: \(track.kind)")
+            debugVideo("Track ID: \(track.trackId)")
+
+            // Check if track state changed unexpectedly
+            if !track.isEnabled {
+                debugCritical("Video track became DISABLED!")
+            }
+            if track.readyState.rawValue == 3 { // ended
+                debugCritical("Video track ENDED!")
+            }
+        }
+    }
+
+    private func testVideoTrackAttachment(track: RTCVideoTrack) {
+        debugVideo("=== TESTING VIDEO TRACK ATTACHMENT ===")
+        debugVideo("Track enabled after attachment: \(track.isEnabled)")
+        debugVideo("Track ready state after attachment: \(track.readyState.rawValue)")
+
+        // Manually trigger debug renderer
+        debugRenderer.setSize(CGSize(width: 100, height: 100))
+        debugVideo("Manual debug renderer setSize test completed")
+
+        // Check video view state
+        logVideoViewState()
+    }
+
+    // MARK: - Statistics and Diagnostics
+
+    private func startStatsMonitoring() {
+        if DebugFlags.webrtcStats {
+            statsTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                self.logWebRTCStats()
+            }
+        }
+    }
+
+    private func logWebRTCStats() {
+        guard peerConnection != nil else { return }
+
+        peerConnection.statistics { [weak self] stats in
+            guard let self = self else { return }
+
+            let currentTime = Date()
+            let timeDiff = currentTime.timeIntervalSince(self.lastStatsTime)
+            self.lastStatsTime = currentTime
+
+            print("📊 RECEIVER WEBRTC STATS (Δ\(String(format: "%.1f", timeDiff))s):")
+
+            var bytesReceived: UInt64 = 0
+            var packetsReceived: UInt32 = 0
+            var packetsLost: UInt32 = 0
+            var framesPerSecond: Double = 0
+            var frameWidth: UInt32 = 0
+            var frameHeight: UInt32 = 0
+            var decoderImplementation = "unknown"
+            var framesDecoded: UInt64 = 0
+            var framesDropped: UInt64 = 0
+            var jitter: Double = 0
+            var bitrateMbps: Double = 0
+
+            for stat in stats.statistics.values {
+                // Inbound RTP (what we're receiving)
+                if stat.type == "inbound-rtp" && stat.values["mediaType"] as? String == "video" {
+                    if let bytes = stat.values["bytesReceived"] as? UInt64 {
+                        bytesReceived = bytes
+                    }
+                    if let packets = stat.values["packetsReceived"] as? UInt32 {
+                        packetsReceived = packets
+                    }
+                    if let lost = stat.values["packetsLost"] as? UInt32 {
+                        packetsLost = lost
+                    }
+                    if let fps = stat.values["framesPerSecond"] as? Double {
+                        framesPerSecond = fps
+                    }
+                    if let width = stat.values["frameWidth"] as? UInt32 {
+                        frameWidth = width
+                    }
+                    if let height = stat.values["frameHeight"] as? UInt32 {
+                        frameHeight = height
+                    }
+                    if let impl = stat.values["decoderImplementation"] as? String {
+                        decoderImplementation = impl
+                    }
+                    if let decoded = stat.values["framesDecoded"] as? UInt64 {
+                        framesDecoded = decoded
+                    }
+                    if let dropped = stat.values["framesDropped"] as? UInt64 {
+                        framesDropped = dropped
+                    }
+                    if let j = stat.values["jitter"] as? Double {
+                        jitter = j
+                    }
+                }
+
+                // Candidate pair (connection quality)
+                if stat.type == "candidate-pair" && stat.values["state"] as? String == "succeeded" {
+                    if let rtt = stat.values["currentRoundTripTime"] as? Double {
+                        print("  📡 RTT: \(String(format: "%.0f", rtt * 1000))ms")
+                    }
+                    if let available = stat.values["availableIncomingBitrate"] as? Double {
+                        print("  📈 Available incoming: \(String(format: "%.1f", available / 1000000))Mbps")
+                    }
+                }
+
+                // Video track stats
+                if stat.type == "track" && stat.values["kind"] as? String == "video" {
+                    if let frozen = stat.values["freezeCount"] as? UInt32 {
+                        print("  🧊 Freeze events: \(frozen)")
+                    }
+                    if let totalFreezeTime = stat.values["totalFreezesDuration"] as? Double {
+                        print("  ⏸️ Total freeze time: \(String(format: "%.2f", totalFreezeTime))s")
+                    }
+                }
+            }
+
+            // Calculate bitrate
+            let bytesDiff = bytesReceived - self.bytesReceivedLastCheck
+            let packetsDiff = packetsReceived - self.packetsReceivedLastCheck
+            bitrateMbps = (Double(bytesDiff) * 8.0) / (timeDiff * 1000000.0)
+
+            print("  📥 Bytes received: \(bytesReceived) (Δ\(bytesDiff))")
+            print("  📦 Packets received: \(packetsReceived) (Δ\(packetsDiff)), lost: \(packetsLost)")
+            print("  🎬 Decoded: \(frameWidth)x\(frameHeight) @ \(String(format: "%.1f", framesPerSecond))fps")
+            print("  🔧 Decoder: \(decoderImplementation)")
+            print("  🎞️ Frames decoded: \(framesDecoded), dropped: \(framesDropped)")
+            print("  📶 Jitter: \(String(format: "%.2f", jitter * 1000))ms")
+            print("  🚀 Bitrate: \(String(format: "%.2f", bitrateMbps))Mbps")
+
+            // Update for next calculation
+            self.bytesReceivedLastCheck = bytesReceived
+            self.packetsReceivedLastCheck = packetsReceived
+
+            // Health checks
+            if framesPerSecond < 5.0 && framesPerSecond > 0 {
+                print("  ⚠️ WARNING: Low FPS (\(framesPerSecond)) - decoding issues?")
+            }
+
+            if bitrateMbps < 0.1 && bytesDiff == 0 && timeDiff > 3.0 {
+                print("  🚨 CRITICAL: No bytes received in \(String(format: "%.1f", timeDiff))s - stream frozen!")
+            }
+
+            if packetsLost > 0 {
+                print("  ⚠️ WARNING: \(packetsLost) packets lost - network issues?")
+            }
+
+            if framesDropped > 0 && timeDiff > 1.0 {
+                print("  ⚠️ WARNING: \(framesDropped) frames dropped - performance issues?")
+            }
+
+            let packetLossRate = packetsReceived > 0 ? Double(packetsLost) / Double(packetsReceived) * 100 : 0
+            if packetLossRate > 5.0 {
+                print("  🚨 HIGH PACKET LOSS: \(String(format: "%.1f", packetLossRate))%")
+            }
         }
     }
 }

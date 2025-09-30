@@ -42,7 +42,7 @@
 		</data>
 		<key>Frameworks/WebRTC.framework/WebRTC</key>
 		<data>
-		FMTSNhfZ/czUOhpwAXGumVfhkJg=
+		uCiU8+RG05oUxv6gVdxkDKVzSL0=
 		</data>
 		<key>Frameworks/WebRTC.framework/_CodeSignature/CodeResources</key>
 		<data>
@@ -50,7 +50,7 @@
 		</data>
 		<key>GolfSwingRTC.debug.dylib</key>
 		<data>
-		HhttJw0boJeMKo8mdabnii6AKaw=
+		ZvLjiIuAS662GYsDE+gemhKv2pc=
 		</data>
 		<key>Info.plist</key>
 		<data>
@@ -62,7 +62,7 @@
 		</data>
 		<key>__preview.dylib</key>
 		<data>
-		dgsm+lRk0ofeEBb+mwfwMzQTwOU=
+		Kjt+KQA2aTdu3KiGLjxLleC5Xws=
 		</data>
 		<key>embedded.mobileprovision</key>
 		<data>
@@ -142,7 +142,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			+IoGbfO5Q89p2WjKFu1w0xYrj8aoLXkOtAGtWNpdCy4=
+			Lfv85YDu+F+Wj8bY5Yqrvf2MyMY/o6WS/tOOuVFpD6E=
 			</data>
 		</dict>
 		<key>Frameworks/WebRTC.framework/_CodeSignature/CodeResources</key>
@@ -156,14 +156,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			pJOHFqgW1c9PBTQcwqeDVSjvy0OQ3FwEqDrF5auADfs=
+			4n1WAmIFMsnUy3srfGb2RMkCZn19OcG/MlynZOR9wQo=
 			</data>
 		</dict>
 		<key>__preview.dylib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			dpputF7tLj8eFTB+F88H5GhD8/UZvwPpy5ZExoTxKck=
+			kwYnRyDKe2+t9eko+YkzUwDxMEtcx5GjZefFzDqgoRQ=
 			</data>
 		</dict>
 		<key>embedded.mobileprovision</key>

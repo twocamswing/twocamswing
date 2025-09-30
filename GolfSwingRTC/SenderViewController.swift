@@ -2,14 +2,14 @@ import UIKit
 import AVFoundation
 import WebRTC
 
-final class SenderViewController: UIViewController, RTCPeerConnectionDelegate {
+final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, RTCVideoCapturerDelegate {
 
     // MARK: - WebRTC
     private var factory: RTCPeerConnectionFactory!
     private var peerConnection: RTCPeerConnection!
     private var videoSource: RTCVideoSource!
     private var capturer: RTCCameraVideoCapturer!
-    private var localVideoTrack: RTCVideoTrack!
+    private var localVideoTrack: RTCVideoTrack?
 
     // MARK: - Signaling
     private let signaler = MPCSignaler(role: .advertiser)
@@ -54,18 +54,13 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate {
 
         videoSource = factory.videoSource()
         capturer = RTCCameraVideoCapturer(delegate: videoSource)
-        localVideoTrack = factory.videoTrack(with: videoSource, trackId: "video0")
 
-        // Note: capturer already has videoSource as delegate for rendering
-        // We'll get frame info through the RTCVideoCapturerDelegate protocol
+        // Also set ourselves as delegate to monitor frame capture
+        capturer.delegate = self
 
-        // Add video track to peer connection
-        let sender = peerConnection.add(localVideoTrack, streamIds: ["stream0"])
-        print("Sender: Added video track to peer connection, sender: \(sender?.track?.kind ?? "nil")")
-        print("Sender: RTP sender parameters: \(sender?.parameters ?? RTCRtpParameters())")
-        print("Sender: Video track ID: \(localVideoTrack.trackId)")
-        print("Sender: Video track enabled at add: \(localVideoTrack.isEnabled)")
-        print("Sender: Video track ready state at add: \(localVideoTrack.readyState.rawValue)")
+        // DON'T create video track yet - wait until capture starts and video source is live
+        // localVideoTrack will be created after capture starts
+        print("Sender: Video track creation deferred until capture starts")
     }
 
     private func setupPreview() {
@@ -76,10 +71,7 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate {
         view.addSubview(preview)
 
         print("Sender: setupPreview - preview frame: \(preview.frame)")
-        print("Sender: setupPreview - localVideoTrack state before add: enabled=\(localVideoTrack.isEnabled) readyState=\(localVideoTrack.readyState.rawValue)")
-
-        // Don't attach video track here - wait for capture to start
-        print("Sender: setupPreview - preview created, video track attachment deferred until capture starts")
+        print("Sender: setupPreview - preview created, video track will be created and attached after capture starts")
     }
 
     private func setupSignaling() {
@@ -167,35 +159,292 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate {
 
                 print("Sender: Starting video capture...")
                 self.capturer.startCapture(with: device, format: format, fps: fps)
+                self.isCapturerRunning = true
+                self.lastFrameTime = Date()
 
-                print("Sender: Video track enabled: \(self.localVideoTrack.isEnabled)")
                 print("Sender: Video source state: \(String(describing: self.videoSource))")
+                print("Sender: Video track will be created after capture stabilizes")
 
-                // Attach to preview immediately after capture starts
-                print("Sender: Attaching video track to preview after capture start...")
-                self.localVideoTrack.add(self.preview)
-                print("Sender: Video track attached to preview")
+                // Wait a moment for first frame to arrive, then create fresh video track with live source
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    print("Sender: Creating fresh video track with live source...")
 
-                // Verify video pipeline after capture starts
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    print("Sender: Verifying video pipeline after 2 seconds...")
-                    print("Sender: Video track enabled: \(self.localVideoTrack.isEnabled)")
-                    print("Sender: Video track ready state: \(self.localVideoTrack.readyState.rawValue)")
-                    print("Sender: Video source state: \(String(describing: self.videoSource))")
-                    print("Sender: Preview frame: \(self.preview.frame)")
-                    print("Sender: Preview superview: \(self.preview.superview != nil)")
+                    // Create new video track with live video source
+                    self.localVideoTrack = self.factory.videoTrack(with: self.videoSource, trackId: "video0")
 
-                    // Force preview to refresh
-                    self.preview.setNeedsLayout()
-                    self.preview.layoutIfNeeded()
-                    self.view.bringSubviewToFront(self.preview)
-                    print("Sender: Preview refreshed and brought to front")
+                    guard let track = self.localVideoTrack else {
+                        print("Sender: Failed to create video track!")
+                        return
+                    }
 
-                    // Check if we should enable the track manually
-                    if self.localVideoTrack.readyState.rawValue == 0 {
-                        print("Sender: Video track ready state is still 0, this may indicate a pipeline issue")
+                    print("Sender: Fresh video track created")
+                    print("Sender: Video track ID: \(track.trackId)")
+                    print("Sender: Video track enabled at creation: \(track.isEnabled)")
+                    print("Sender: Video track ready state at creation: \(track.readyState.rawValue)")
+
+                    // Attach to preview immediately after track creation
+                    print("Sender: Attaching fresh video track to preview...")
+                    track.add(self.preview)
+                    print("Sender: Video track attached to preview")
+
+                    // Enable the track explicitly
+                    track.isEnabled = true
+                    print("Sender: Video track explicitly enabled: \(track.isEnabled)")
+
+                    print("Sender: Adding fresh video track to peer connection...")
+                    let sender = self.peerConnection.add(track, streamIds: ["stream0"])
+                    print("Sender: Added video track to peer connection, sender: \(sender?.track?.kind ?? "nil")")
+                    print("Sender: Video track ready state after add: \(track.readyState.rawValue)")
+                    print("Sender: RTP sender parameters: \(sender?.parameters ?? RTCRtpParameters())")
+
+                    // Force renegotiation now that we have a live video track
+                    self.peerConnection.offer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { [weak self] sdp, error in
+                        guard let self = self, let sdp = sdp, error == nil else {
+                            print("Sender: Failed to create offer after adding track: \(error?.localizedDescription ?? "unknown")")
+                            return
+                        }
+
+                        self.peerConnection.setLocalDescription(sdp) { error in
+                            if let error = error {
+                                print("Sender: Failed to set local description: \(error.localizedDescription)")
+                                return
+                            }
+                            print("Sender: setLocalDescription(offer) ok after adding track")
+                            print("Sender: Offer SDP contains video: \(sdp.sdp.contains("m=video"))")
+                            self.signaler.send(.offer(sdp))
+                            print("Sender: sent renegotiation offer")
+                        }
                     }
                 }
+
+                // Verify and maintain video pipeline with periodic checks
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    print("Sender: Verifying video pipeline after 2 seconds...")
+                    self.checkAndMaintainVideoTrack()
+                }
+
+                // Start periodic video track maintenance every 5 seconds
+                Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] timer in
+                    guard let self = self else {
+                        timer.invalidate()
+                        return
+                    }
+                    self.checkAndMaintainVideoTrack()
+                }
+
+                // Start WebRTC statistics monitoring every 2 seconds
+                self.statsTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+                    guard let self = self else {
+                        timer.invalidate()
+                        return
+                    }
+                    self.logWebRTCStats()
+                }
+            }
+        }
+    }
+
+    // MARK: - Video Track Maintenance
+
+    private var lastFrameTime = Date()
+    private var frameCount = 0
+    private var isCapturerRunning = false
+    private var statsTimer: Timer?
+    private var lastStatsTime = Date()
+    private var bytesSentLastCheck: UInt64 = 0
+    private var packetsSentLastCheck: UInt32 = 0
+
+    private func checkAndMaintainVideoTrack() {
+        guard let localVideoTrack = localVideoTrack else {
+            print("Sender: Video track maintenance check - no track created yet")
+            return
+        }
+
+        print("Sender: Video track maintenance check...")
+        print("Sender: Video track enabled: \(localVideoTrack.isEnabled)")
+        print("Sender: Video track ready state: \(localVideoTrack.readyState.rawValue)")
+        print("Sender: Video source state: \(String(describing: videoSource))")
+
+        // Check if we've received frames recently
+        let timeSinceLastFrame = Date().timeIntervalSince(lastFrameTime)
+        print("Sender: Time since last frame: \(timeSinceLastFrame)s, Frame count: \(frameCount)")
+
+        // If no frames for more than 6 seconds, restart capture
+        if timeSinceLastFrame > 6.0 && isCapturerRunning {
+            print("Sender: No frames received for \(timeSinceLastFrame)s - restarting capture")
+            restartVideoCapture()
+            return
+        }
+
+        // If track is not enabled or not in live state, fix it
+        if !localVideoTrack.isEnabled {
+            print("Sender: Video track was disabled, re-enabling...")
+            localVideoTrack.isEnabled = true
+        }
+
+        if localVideoTrack.readyState.rawValue == 0 {
+            print("Sender: Video track ready state is 0, attempting to reactivate...")
+            // Try to reattach the video track to refresh its state
+            localVideoTrack.remove(preview)
+            localVideoTrack.add(preview)
+            localVideoTrack.isEnabled = true
+            print("Sender: Video track reattached and re-enabled")
+        }
+
+        // Force preview refresh
+        preview.setNeedsLayout()
+        preview.layoutIfNeeded()
+        view.bringSubviewToFront(preview)
+    }
+
+    private func restartVideoCapture() {
+        print("Sender: Restarting video capture...")
+
+        // Stop current capture
+        capturer.stopCapture()
+        isCapturerRunning = false
+
+        // Wait a moment then restart
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.reinitializeVideoCapture()
+        }
+    }
+
+    private func reinitializeVideoCapture() {
+        print("Sender: Reinitializing video capture...")
+
+        let devices = RTCCameraVideoCapturer.captureDevices()
+        guard let device = devices.first(where: { $0.position == .back }) ?? devices.first else {
+            print("Sender: No camera device found during restart!")
+            return
+        }
+
+        let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
+        let format = formats.first { format in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let pixels = dimensions.width * dimensions.height
+            return pixels >= 1280 * 720 && pixels <= 1920 * 1080
+        } ?? formats.first { format in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return dimensions.width >= 640 && dimensions.height >= 480
+        } ?? formats.first!
+
+        let fps = max(24, min(30, Int(format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30)))
+
+        print("Sender: Restarting capture with format: \(CMVideoFormatDescriptionGetDimensions(format.formatDescription).width)x\(CMVideoFormatDescriptionGetDimensions(format.formatDescription).height) @ \(fps)fps")
+
+        capturer.startCapture(with: device, format: format, fps: fps)
+        isCapturerRunning = true
+
+        // Reset frame tracking
+        lastFrameTime = Date()
+        frameCount = 0
+
+        // Re-enable track if it exists
+        localVideoTrack?.isEnabled = true
+        print("Sender: Video capture restarted successfully")
+    }
+
+    // MARK: - WebRTC Statistics and Diagnostics
+
+    private func logWebRTCStats() {
+        guard peerConnection != nil else { return }
+
+        peerConnection.statistics { [weak self] stats in
+            guard let self = self else { return }
+
+            let currentTime = Date()
+            let timeDiff = currentTime.timeIntervalSince(self.lastStatsTime)
+            self.lastStatsTime = currentTime
+
+            print("🔍 SENDER WEBRTC STATS (Δ\(String(format: "%.1f", timeDiff))s):")
+
+            var videoSent: UInt64 = 0
+            var audioSent: UInt64 = 0
+            var packetsSent: UInt32 = 0
+            var packetsLost: UInt32 = 0
+            var bytesSent: UInt64 = 0
+            var framesPerSecond: Double = 0
+            var frameWidth: UInt32 = 0
+            var frameHeight: UInt32 = 0
+            var encoderImplementation = "unknown"
+            var bitrateMbps: Double = 0
+
+            for stat in stats.statistics.values {
+                // Outbound RTP (what we're sending)
+                if stat.type == "outbound-rtp" && stat.values["mediaType"] as? String == "video" {
+                    if let bytes = stat.values["bytesSent"] as? UInt64 {
+                        bytesSent = bytes
+                        videoSent = bytes
+                    }
+                    if let packets = stat.values["packetsSent"] as? UInt32 {
+                        packetsSent = packets
+                    }
+                    if let lost = stat.values["packetsLost"] as? UInt32 {
+                        packetsLost = lost
+                    }
+                    if let fps = stat.values["framesPerSecond"] as? Double {
+                        framesPerSecond = fps
+                    }
+                    if let width = stat.values["frameWidth"] as? UInt32 {
+                        frameWidth = width
+                    }
+                    if let height = stat.values["frameHeight"] as? UInt32 {
+                        frameHeight = height
+                    }
+                    if let impl = stat.values["encoderImplementation"] as? String {
+                        encoderImplementation = impl
+                    }
+                }
+
+                // Candidate pair (connection quality)
+                if stat.type == "candidate-pair" && stat.values["state"] as? String == "succeeded" {
+                    if let rtt = stat.values["currentRoundTripTime"] as? Double {
+                        print("  📡 RTT: \(String(format: "%.0f", rtt * 1000))ms")
+                    }
+                    if let available = stat.values["availableOutgoingBitrate"] as? Double {
+                        print("  📊 Available outgoing: \(String(format: "%.1f", available / 1000000))Mbps")
+                    }
+                }
+
+                // Media source (frame statistics)
+                if stat.type == "media-source" && stat.values["kind"] as? String == "video" {
+                    if let fps = stat.values["framesPerSecond"] as? Double {
+                        print("  🎥 Source FPS: \(String(format: "%.1f", fps))")
+                    }
+                    if let width = stat.values["width"] as? UInt32,
+                       let height = stat.values["height"] as? UInt32 {
+                        print("  📐 Source resolution: \(width)x\(height)")
+                    }
+                }
+            }
+
+            // Calculate bitrate
+            let bytesDiff = bytesSent - self.bytesSentLastCheck
+            let packetsDiff = packetsSent - self.packetsSentLastCheck
+            bitrateMbps = (Double(bytesDiff) * 8.0) / (timeDiff * 1000000.0)
+
+            print("  📤 Bytes sent: \(bytesSent) (Δ\(bytesDiff))")
+            print("  📦 Packets sent: \(packetsSent) (Δ\(packetsDiff)), lost: \(packetsLost)")
+            print("  🎬 Encoded: \(frameWidth)x\(frameHeight) @ \(String(format: "%.1f", framesPerSecond))fps")
+            print("  💾 Encoder: \(encoderImplementation)")
+            print("  🚀 Bitrate: \(String(format: "%.2f", bitrateMbps))Mbps")
+
+            // Update for next calculation
+            self.bytesSentLastCheck = bytesSent
+            self.packetsSentLastCheck = packetsSent
+
+            // Health checks
+            if framesPerSecond < 5.0 && framesPerSecond > 0 {
+                print("  ⚠️ WARNING: Low FPS (\(framesPerSecond)) - encoding issues?")
+            }
+
+            if bitrateMbps < 0.1 && bytesDiff == 0 && timeDiff > 3.0 {
+                print("  🚨 CRITICAL: No bytes sent in \(String(format: "%.1f", timeDiff))s - stream may be frozen!")
+            }
+
+            if packetsLost > 0 {
+                print("  ⚠️ WARNING: \(packetsLost) packets lost - network issues?")
             }
         }
     }
@@ -304,5 +553,20 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
+
+    // MARK: - RTCVideoCapturerDelegate
+
+    func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) {
+        frameCount += 1
+        lastFrameTime = Date()
+
+        // Log every 30 frames to avoid spam
+        if frameCount % 30 == 0 {
+            print("Sender: Captured frame \(frameCount), size: \(frame.width)x\(frame.height)")
+        }
+
+        // Forward to video source
+        videoSource.capturer(capturer, didCapture: frame)
+    }
 
 }

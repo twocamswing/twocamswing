@@ -26,6 +26,16 @@
     "swift-dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/AppDelegate.swiftdeps",
     "swiftmodule" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/AppDelegate~partial.swiftmodule"
   },
+  "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/DebugFlags.swift" : {
+    "const-values" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.swiftconstvalues",
+    "dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.d",
+    "diagnostics" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.dia",
+    "index-unit-output-path" : "/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.o",
+    "llvm-bc" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.bc",
+    "object" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.o",
+    "swift-dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags.swiftdeps",
+    "swiftmodule" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/DebugFlags~partial.swiftmodule"
+  },
   "/Users/user/Solutions/GolfSwingRTC/GolfSwingRTC/MPCSignaler.swift" : {
     "const-values" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/MPCSignaler.swiftconstvalues",
     "dependencies" : "/Users/user/Solutions/GolfSwingRTC/DerivedData/Build/Intermediates.noindex/GolfSwingRTC.build/Debug-iphoneos/GolfSwingRTC.build/Objects-normal/arm64/MPCSignaler.d",
