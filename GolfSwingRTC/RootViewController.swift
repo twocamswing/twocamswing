@@ -3,6 +3,18 @@ import Network
 
 final class RootViewController: UIViewController {
 
+    private enum AutoRole: String {
+        case sender
+        case receiver
+
+        init?(environmentValue: String?) {
+            guard let value = environmentValue?.lowercased() else { return nil }
+            self.init(rawValue: value)
+        }
+    }
+
+    private var didAutoLaunch = false
+
     private func triggerLocalNetworkPermission() {
         let params = NWParameters.udp
         let conn = NWConnection(host: "224.0.0.251", port: 5353, using: params) // mDNS group
@@ -46,6 +58,22 @@ final class RootViewController: UIViewController {
             stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: view.centerYAnchor)
         ])
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        guard !didAutoLaunch else { return }
+        didAutoLaunch = true
+
+        switch AutoRole(environmentValue: ProcessInfo.processInfo.environment["AUTO_ROLE"]) {
+        case .sender:
+            startSender()
+        case .receiver:
+            startReceiver()
+        case .none:
+            break
+        }
     }
 
     @objc private func startSender() {

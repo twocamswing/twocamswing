@@ -1,0 +1,6 @@
+{
+  "actions": [
+    { "type": "waitForView", "identifier": { "text": "Golf Swing RTC" }, "timeout": 10 },
+    { "type": "tap", "identifier": { "text": "Start as Receiver (Viewer)" } }
+  ]
+}

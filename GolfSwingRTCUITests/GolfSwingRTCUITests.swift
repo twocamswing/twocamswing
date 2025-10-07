@@ -22,20 +22,38 @@ final class GolfSwingRTCUITests: XCTestCase {
         // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
-    @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testStartSenderFlow() {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        let senderButton = app.buttons["Start as Sender (Camera)"]
+        XCTAssertTrue(senderButton.waitForExistence(timeout: 5), "Sender button is not visible")
+        senderButton.tap()
+
+        // Give the sender view time to finish presenting so the camera spins up.
+        sleep(5)
+
+        // Verify we navigated away from the root menu.
+        XCTAssertFalse(senderButton.exists, "Sender button still visible after tap")
+
+        // Hold a bit longer so manual observers can confirm the feed is live before the test ends.
+        sleep(5)
     }
 
-    @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+    func testStartReceiverFlow() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let receiverButton = app.buttons["Start as Receiver (Viewer)"]
+        XCTAssertTrue(receiverButton.waitForExistence(timeout: 5), "Receiver button is not visible")
+        receiverButton.tap()
+
+        // Allow the receiver UI to settle so the stream can subscribe.
+        sleep(5)
+
+        XCTAssertFalse(receiverButton.exists, "Receiver button still visible after tap")
+
+        // Hold the viewer on screen briefly so you can confirm frames arrive.
+        sleep(5)
     }
 }

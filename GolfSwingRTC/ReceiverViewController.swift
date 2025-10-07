@@ -5,8 +5,9 @@ import Foundation
 
 class DebugVideoRenderer: NSObject, RTCVideoRenderer {
     private var frameCount = 0
-    private var lastFrameTime = Date()
+    var lastFrameTime = Date()  // Made accessible for freeze detection
     private var lastLogTime = Date()
+    private var lastFpsCalcTime = Date()  // Separate variable for FPS calculation
 
     func setSize(_ size: CGSize) {
         debugVideo("DebugRenderer setSize: \(size)")
@@ -15,27 +16,32 @@ class DebugVideoRenderer: NSObject, RTCVideoRenderer {
     func renderFrame(_ frame: RTCVideoFrame?) {
         frameCount += 1
         let now = Date()
+        lastFrameTime = now  // Always update the actual last frame time
 
         // Log every 30 frames to avoid spam
         if frameCount % 30 == 0 || now.timeIntervalSince(lastLogTime) > 2.0 {
-            let fps = 30.0 / now.timeIntervalSince(lastFrameTime)
+            let fps = 30.0 / now.timeIntervalSince(lastFpsCalcTime)
             debugFrame("DebugRenderer frame #\(frameCount): \(frame?.width ?? 0)x\(frame?.height ?? 0) @ \(String(format: "%.1f", fps))fps")
-            lastFrameTime = now
+            lastFpsCalcTime = now
             lastLogTime = now
         }
 
-        // Critical: Check for frame freeze
-        let timeSinceLastFrame = now.timeIntervalSince(lastFrameTime)
-        if timeSinceLastFrame > 3.0 {
-            debugCritical("DebugRenderer: Frame delivery STOPPED! \(String(format: "%.1f", timeSinceLastFrame))s since last frame")
-        }
+        // Critical: Check for frame freeze - this check is now performed elsewhere in the monitoring timer
     }
 }
 
 final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate {
     private var remoteVideoView: RTCMTLVideoView!
     private var peerConnection: RTCPeerConnection!
-    private let factory = RTCPeerConnectionFactory()
+    private let factory: RTCPeerConnectionFactory = {
+        let encoderFactory = RTCDefaultVideoEncoderFactory()
+        if let h264 = encoderFactory.supportedCodecs().first(where: { $0.name == kRTCVideoCodecH264Name }) {
+            encoderFactory.preferredCodec = h264
+        }
+
+        let decoderFactory = RTCDefaultVideoDecoderFactory()
+        return RTCPeerConnectionFactory(encoderFactory: encoderFactory, decoderFactory: decoderFactory)
+    }()
     private let signaler = MPCSignaler(role: .browser)   // use .browser role
     private let debugRenderer = DebugVideoRenderer()
 
@@ -55,9 +61,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
 
     private func setupVideoView() {
         remoteVideoView = RTCMTLVideoView(frame: view.bounds)
-        remoteVideoView.videoContentMode = .scaleAspectFit
+        // Use scaleAspectFit for iPads to prevent rotation issues
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            remoteVideoView.videoContentMode = .scaleAspectFit
+        } else {
+            remoteVideoView.videoContentMode = .scaleAspectFill
+        }
         remoteVideoView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        remoteVideoView.backgroundColor = .red // Temporary debug color
+        remoteVideoView.backgroundColor = .black
         view.addSubview(remoteVideoView)
 
         debugVideo("setupVideoView completed - frame: \(remoteVideoView.frame)")
@@ -261,10 +272,16 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
 
         if let track = rtpReceiver.track as? RTCVideoTrack {
             debugVideo("Video track found, attaching to view...")
-            let workItem = DispatchWorkItem {
+            DispatchQueue.main.async {
                 debugVideo("On main queue, video view frame: \(self.remoteVideoView.frame)")
                 debugVideo("Video view superview: \(self.remoteVideoView.superview != nil)")
                 debugVideo("Track is enabled: \(track.isEnabled)")
+
+                // CRITICAL: Ensure track is enabled BEFORE attaching
+                if !track.isEnabled {
+                    debugVideo("WARNING: Track was disabled, enabling it now")
+                    track.isEnabled = true
+                }
 
                 // Track attachment with detailed logging
                 debugVideo("Attaching track to RTCMTLVideoView...")
@@ -275,26 +292,54 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
                 track.add(self.debugRenderer)
                 debugVideo("Debug renderer attachment completed")
 
+                // Don't apply rotation transforms - just use proper content mode
+                self.handleVideoRotation(track: track)
+
                 debugVideo("Video track state: enabled=\(track.isEnabled) readyState=\(track.readyState.rawValue)")
 
                 // Monitor video track state changes
                 self.startVideoTrackMonitoring(track: track)
 
-                // Force video view to front and refresh with detailed logging
-                debugVideo("Bringing video view to front...")
+                // Force video view to front and refresh
+                self.view.bringSubviewToFront(self.remoteVideoView)
                 self.remoteVideoView.setNeedsLayout()
                 self.remoteVideoView.layoutIfNeeded()
-                self.view.bringSubviewToFront(self.remoteVideoView)
-                debugVideo("Video view layout and positioning completed")
 
-                // Test track attachment after delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    self.testVideoTrackAttachment(track: track)
+                // Keep checking that track stays enabled
+                Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
+                    if !track.isEnabled {
+                        debugCritical("Track became disabled! Re-enabling...")
+                        track.isEnabled = true
+                    }
+                    // Stop after 10 seconds
+                    if timer.fireDate.timeIntervalSinceNow > 10 {
+                        timer.invalidate()
+                    }
                 }
             }
-            DispatchQueue.main.async(execute: workItem)
         } else {
             debugCritical("No video track found in rtpReceiver!")
+        }
+    }
+
+    private func handleVideoRotation(track: RTCVideoTrack) {
+        // Don't rotate here - the rotation issue is likely in how WebRTC handles orientation
+        // Instead, we should configure the video view properly
+        debugVideo("handleVideoRotation called - resetting to defaults")
+
+        // Reset any previous transforms
+        remoteVideoView.transform = CGAffineTransform.identity
+        remoteVideoView.frame = view.bounds
+
+        // The real fix: Set the video content mode to handle aspect ratio properly
+        // For landscape iPads showing portrait video
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // Use scaleAspectFit to show the entire video without distortion
+            remoteVideoView.videoContentMode = .scaleAspectFit
+            debugVideo("iPad detected - using scaleAspectFit for proper aspect ratio")
+        } else {
+            remoteVideoView.videoContentMode = .scaleAspectFill
+            debugVideo("iPhone detected - using scaleAspectFill")
         }
     }
 
@@ -318,21 +363,17 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
             if track.readyState.rawValue == 3 { // ended
                 debugCritical("Video track ENDED!")
             }
+
+            // Check for actual frame freeze using debug renderer's last frame time
+            if let lastFrameTime = (self.debugRenderer as? DebugVideoRenderer)?.lastFrameTime {
+                let timeSinceLastFrame = Date().timeIntervalSince(lastFrameTime)
+                if timeSinceLastFrame > 3.0 {
+                    debugCritical("Frame delivery STOPPED! \(String(format: "%.1f", timeSinceLastFrame))s since last frame")
+                }
+            }
         }
     }
 
-    private func testVideoTrackAttachment(track: RTCVideoTrack) {
-        debugVideo("=== TESTING VIDEO TRACK ATTACHMENT ===")
-        debugVideo("Track enabled after attachment: \(track.isEnabled)")
-        debugVideo("Track ready state after attachment: \(track.readyState.rawValue)")
-
-        // Manually trigger debug renderer
-        debugRenderer.setSize(CGSize(width: 100, height: 100))
-        debugVideo("Manual debug renderer setSize test completed")
-
-        // Check video view state
-        logVideoViewState()
-    }
 
     // MARK: - Statistics and Diagnostics
 

@@ -7,6 +7,7 @@ The iOS app lives in `GolfSwingRTC/` with `AppDelegate.swift`, `SceneDelegate.sw
 - `pod install` – sync CocoaPods and generate `GolfSwingRTC.xcworkspace` before opening the project.
 - `xcodebuild -workspace GolfSwingRTC.xcworkspace -scheme GolfSwingRTC -configuration Debug build` – compile the app for the current SDK.
 - `xcodebuild test -workspace GolfSwingRTC.xcworkspace -scheme GolfSwingRTC -destination 'platform=iOS Simulator,name=iPhone 15'` – run unit and UI tests headlessly.
+- `scripts/red-orange-session.sh` – redeploy to the red sender and orange receiver hardware, tap the "Start" buttons via automation, and stream logs into `logs/`.
 
 ## Coding Style & Naming Conventions
 Use Swift's default four-space indentation and keep braces on the same line as declarations. Prefer `final class` or `struct` as seen in the controllers and keep member ordering grouped under `// MARK:` headers. Adopt UpperCamelCase for types, lowerCamelCase for properties and functions, and rely on the existing `debug*` helpers instead of raw `print`.
