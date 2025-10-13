@@ -31,6 +31,17 @@ class DebugVideoRenderer: NSObject, RTCVideoRenderer {
     }
 }
 
+private final class CameraPreviewView: UIView {
+    override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        guard let layer = layer as? AVCaptureVideoPreviewLayer else {
+            fatalError("CameraPreviewView layer is not AVCaptureVideoPreviewLayer")
+        }
+        return layer
+    }
+}
+
 final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate {
     private var remoteVideoView: RTCMTLVideoView!
     private var remoteVideoContainer: UIView?
@@ -48,8 +59,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     private let debugRenderer = DebugVideoRenderer()
     private var splitContainer: UIStackView?
     private var frontPreviewContainer: UIView?
+    private let frontPreviewView = CameraPreviewView()
     private var frontCameraSession: AVCaptureSession?
-    private var frontPreviewLayer: AVCaptureVideoPreviewLayer?
     private let frontCameraQueue = DispatchQueue(label: "com.golfswingrtc.receiver.frontcamera")
 
     // Statistics tracking
@@ -58,14 +69,31 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     private var bytesReceivedLastCheck: UInt64 = 0
     private var packetsReceivedLastCheck: UInt32 = 0
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        UIDevice.current.endGeneratingDeviceOrientationNotifications()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
         setupLayout()
         setupVideoView()
         setupFrontCameraPreview()
         setupPeerConnection()
         setupSignaler()
         startStatsMonitoring()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDeviceOrientationChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+        updateFrontPreviewOrientation()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -75,12 +103,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
         stopFrontCameraSession()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        frontPreviewLayer?.frame = frontPreviewContainer?.bounds ?? .zero
+        frontPreviewView.previewLayer.frame = frontPreviewView.bounds
+        updateFrontPreviewOrientation()
     }
 
     private func setupLayout() {
@@ -95,6 +125,16 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         frontContainer.backgroundColor = UIColor.black.withAlphaComponent(0.85)
         frontContainer.layer.cornerRadius = 12
         frontContainer.layer.masksToBounds = true
+
+        frontPreviewView.translatesAutoresizingMaskIntoConstraints = false
+        frontPreviewView.isHidden = true
+        frontContainer.addSubview(frontPreviewView)
+        NSLayoutConstraint.activate([
+            frontPreviewView.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor),
+            frontPreviewView.trailingAnchor.constraint(equalTo: frontContainer.trailingAnchor),
+            frontPreviewView.topAnchor.constraint(equalTo: frontContainer.topAnchor),
+            frontPreviewView.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor)
+        ])
 
         let frontLabel = UILabel()
         frontLabel.text = "Front Camera"
@@ -201,33 +241,26 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
 
             session.commitConfiguration()
 
-            let previewLayer = AVCaptureVideoPreviewLayer(session: session)
+            let previewLayer = frontPreviewView.previewLayer
+            previewLayer.session = session
             previewLayer.videoGravity = .resizeAspectFill
-            previewLayer.frame = frontPreviewContainer?.bounds ?? .zero
+            previewLayer.frame = frontPreviewView.bounds
             previewLayer.needsDisplayOnBoundsChange = true
 
-            if let existingLayers = frontPreviewContainer?.layer.sublayers {
-                for layer in existingLayers where layer is AVCaptureVideoPreviewLayer {
-                    layer.removeFromSuperlayer()
-                }
-            }
-
-            frontPreviewContainer?.layer.insertSublayer(previewLayer, at: 0)
-
-            // IMPORTANT: Do NOT access ANY properties on the AVCaptureConnection for the preview layer
-            // On Orange iPad (iOS 18.6.2), accessing connection.isVideoOrientationSupported triggers
-            // an internal check for isVideoMirroringSupported which causes an NSInvalidArgumentException.
-            // The system automatically handles orientation and mirroring for front camera previews,
-            // so we don't need to configure anything manually.
+            // IMPORTANT: Avoid poking at broader AVCaptureConnection state; Orange iPad (iOS 18.6.2)
+            // was crashing when we queried mirroring support. Orientation is handled separately via
+            // updateFrontPreviewOrientation().
             if let label = frontPreviewContainer?.subviews.compactMap({ $0 as? UILabel }).first {
                 frontPreviewContainer?.bringSubviewToFront(label)
             }
+
+            frontPreviewView.isHidden = false
             frontPreviewContainer?.isHidden = false
 
             frontCameraSession = session
-            frontPreviewLayer = previewLayer
 
             startFrontCameraSessionIfNeeded()
+            updateFrontPreviewOrientation()
         } catch {
             debugVideo("Failed to configure front camera preview: \(error.localizedDescription)")
             frontPreviewContainer?.isHidden = true
@@ -242,6 +275,39 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     private func stopFrontCameraSession() {
         guard let session = frontCameraSession, session.isRunning else { return }
         frontCameraQueue.async { session.stopRunning() }
+    }
+
+    @objc private func handleDeviceOrientationChange() {
+        updateFrontPreviewOrientation()
+    }
+
+    private func updateFrontPreviewOrientation() {
+        let orientation = resolvedVideoOrientation()
+        guard let connection = frontPreviewView.previewLayer.connection,
+              connection.isVideoOrientationSupported,
+              connection.videoOrientation != orientation else { return }
+        connection.videoOrientation = orientation
+    }
+
+    private func resolvedVideoOrientation() -> AVCaptureVideoOrientation {
+        if let interfaceOrientation = view.window?.windowScene?.interfaceOrientation {
+            switch interfaceOrientation {
+            case .portrait: return .portrait
+            case .portraitUpsideDown: return .portraitUpsideDown
+            case .landscapeLeft: return .landscapeLeft
+            case .landscapeRight: return .landscapeRight
+            case .unknown: break
+            @unknown default: break
+            }
+        }
+
+        switch UIDevice.current.orientation {
+        case .portrait: return .portrait
+        case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeRight  // device rotated left -> camera needs opposite
+        case .landscapeRight: return .landscapeLeft
+        default: return .portrait
+        }
     }
     private func setupVideoViewDiagnostics() {
         // Monitor video view rendering state periodically
