@@ -2,6 +2,7 @@ import UIKit
 import WebRTC
 import MultipeerConnectivity
 import Foundation
+import AVFoundation
 
 class DebugVideoRenderer: NSObject, RTCVideoRenderer {
     private var frameCount = 0
@@ -32,6 +33,7 @@ class DebugVideoRenderer: NSObject, RTCVideoRenderer {
 
 final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate {
     private var remoteVideoView: RTCMTLVideoView!
+    private var remoteVideoContainer: UIView?
     private var peerConnection: RTCPeerConnection!
     private let factory: RTCPeerConnectionFactory = {
         let encoderFactory = RTCDefaultVideoEncoderFactory()
@@ -44,6 +46,11 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     }()
     private let signaler = MPCSignaler(role: .browser)   // use .browser role
     private let debugRenderer = DebugVideoRenderer()
+    private var splitContainer: UIStackView?
+    private var frontPreviewContainer: UIView?
+    private var frontCameraSession: AVCaptureSession?
+    private var frontPreviewLayer: AVCaptureVideoPreviewLayer?
+    private let frontCameraQueue = DispatchQueue(label: "com.golfswingrtc.receiver.frontcamera")
 
     // Statistics tracking
     private var statsTimer: Timer?
@@ -53,33 +60,189 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        setupLayout()
         setupVideoView()
+        setupFrontCameraPreview()
         setupPeerConnection()
         setupSignaler()
         startStatsMonitoring()
     }
 
-    private func setupVideoView() {
-        remoteVideoView = RTCMTLVideoView(frame: view.bounds)
-        // Use scaleAspectFit for iPads to prevent rotation issues
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            remoteVideoView.videoContentMode = .scaleAspectFit
-        } else {
-            remoteVideoView.videoContentMode = .scaleAspectFill
-        }
-        remoteVideoView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        remoteVideoView.backgroundColor = .black
-        view.addSubview(remoteVideoView)
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        startFrontCameraSessionIfNeeded()
+    }
 
-        debugVideo("setupVideoView completed - frame: \(remoteVideoView.frame)")
-        debugVideo("Video view added to superview: \(remoteVideoView.superview != nil)")
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopFrontCameraSession()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        frontPreviewLayer?.frame = frontPreviewContainer?.bounds ?? .zero
+    }
+
+    private func setupLayout() {
+        let stack = UIStackView()
+        stack.axis = .horizontal
+        stack.distribution = .fillEqually
+        stack.alignment = .fill
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let frontContainer = UIView()
+        frontContainer.backgroundColor = UIColor.black.withAlphaComponent(0.85)
+        frontContainer.layer.cornerRadius = 12
+        frontContainer.layer.masksToBounds = true
+
+        let frontLabel = UILabel()
+        frontLabel.text = "Front Camera"
+        frontLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        frontLabel.textColor = .white
+        frontLabel.translatesAutoresizingMaskIntoConstraints = false
+        frontContainer.addSubview(frontLabel)
+        NSLayoutConstraint.activate([
+            frontLabel.topAnchor.constraint(equalTo: frontContainer.topAnchor, constant: 12),
+            frontLabel.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12)
+        ])
+
+        let remoteContainer = UIView()
+        remoteContainer.backgroundColor = .black
+
+        stack.addArrangedSubview(frontContainer)
+        stack.addArrangedSubview(remoteContainer)
+
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
+        ])
+
+        splitContainer = stack
+        frontPreviewContainer = frontContainer
+        remoteVideoContainer = remoteContainer
+    }
+
+    private func setupVideoView() {
+        guard let remoteContainer = remoteVideoContainer else { return }
+        let remoteView = RTCMTLVideoView(frame: .zero)
+        remoteView.translatesAutoresizingMaskIntoConstraints = false
+        remoteView.videoContentMode = UIDevice.current.userInterfaceIdiom == .pad ? .scaleAspectFit : .scaleAspectFill
+        remoteView.backgroundColor = .black
+
+        remoteContainer.addSubview(remoteView)
+        NSLayoutConstraint.activate([
+            remoteView.leadingAnchor.constraint(equalTo: remoteContainer.leadingAnchor),
+            remoteView.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor),
+            remoteView.topAnchor.constraint(equalTo: remoteContainer.topAnchor),
+            remoteView.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor)
+        ])
+
+        remoteVideoView = remoteView
+
+        debugVideo("setupVideoView completed - container: \(String(describing: remoteVideoContainer?.frame))")
+        debugVideo("Video view added to container: \(remoteVideoView.superview != nil)")
         debugVideo("Device screen bounds: \(UIScreen.main.bounds)")
         debugVideo("Device scale: \(UIScreen.main.scale)")
 
-        // Add render diagnostics
         setupVideoViewDiagnostics()
     }
 
+    private func setupFrontCameraPreview() {
+        guard let previewContainer = frontPreviewContainer else { return }
+        previewContainer.isHidden = true
+
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            configureFrontCameraSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard granted else {
+                        debugVideo("Front camera preview denied by user")
+                        self?.frontPreviewContainer?.isHidden = true
+                        return
+                    }
+                    self?.configureFrontCameraSession()
+                }
+            }
+        default:
+            debugVideo("Front camera preview skipped due to authorization status \(status.rawValue)")
+            previewContainer.isHidden = true
+        }
+    }
+
+    private func configureFrontCameraSession() {
+        guard frontCameraSession == nil else {
+            frontPreviewContainer?.isHidden = false
+            startFrontCameraSessionIfNeeded()
+            return
+        }
+
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
+            debugVideo("Front camera device not available")
+            frontPreviewContainer?.isHidden = true
+            return
+        }
+
+        do {
+            let session = AVCaptureSession()
+            session.beginConfiguration()
+            session.sessionPreset = .medium
+
+            let input = try AVCaptureDeviceInput(device: device)
+            if session.canAddInput(input) {
+                session.addInput(input)
+            }
+
+            session.commitConfiguration()
+
+            let previewLayer = AVCaptureVideoPreviewLayer(session: session)
+            previewLayer.videoGravity = .resizeAspectFill
+            previewLayer.frame = frontPreviewContainer?.bounds ?? .zero
+            previewLayer.needsDisplayOnBoundsChange = true
+
+            if let existingLayers = frontPreviewContainer?.layer.sublayers {
+                for layer in existingLayers where layer is AVCaptureVideoPreviewLayer {
+                    layer.removeFromSuperlayer()
+                }
+            }
+
+            frontPreviewContainer?.layer.insertSublayer(previewLayer, at: 0)
+
+            // IMPORTANT: Do NOT access ANY properties on the AVCaptureConnection for the preview layer
+            // On Orange iPad (iOS 18.6.2), accessing connection.isVideoOrientationSupported triggers
+            // an internal check for isVideoMirroringSupported which causes an NSInvalidArgumentException.
+            // The system automatically handles orientation and mirroring for front camera previews,
+            // so we don't need to configure anything manually.
+            if let label = frontPreviewContainer?.subviews.compactMap({ $0 as? UILabel }).first {
+                frontPreviewContainer?.bringSubviewToFront(label)
+            }
+            frontPreviewContainer?.isHidden = false
+
+            frontCameraSession = session
+            frontPreviewLayer = previewLayer
+
+            startFrontCameraSessionIfNeeded()
+        } catch {
+            debugVideo("Failed to configure front camera preview: \(error.localizedDescription)")
+            frontPreviewContainer?.isHidden = true
+        }
+    }
+
+    private func startFrontCameraSessionIfNeeded() {
+        guard let session = frontCameraSession, !session.isRunning else { return }
+        frontCameraQueue.async { session.startRunning() }
+    }
+
+    private func stopFrontCameraSession() {
+        guard let session = frontCameraSession, session.isRunning else { return }
+        frontCameraQueue.async { session.stopRunning() }
+    }
     private func setupVideoViewDiagnostics() {
         // Monitor video view rendering state periodically
         Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
@@ -301,7 +464,12 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
                 self.startVideoTrackMonitoring(track: track)
 
                 // Force video view to front and refresh
-                self.view.bringSubviewToFront(self.remoteVideoView)
+                if let container = self.remoteVideoContainer {
+                    self.view.bringSubviewToFront(container)
+                }
+                if let preview = self.frontPreviewContainer {
+                    self.view.bringSubviewToFront(preview)
+                }
                 self.remoteVideoView.setNeedsLayout()
                 self.remoteVideoView.layoutIfNeeded()
 
@@ -328,8 +496,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         debugVideo("handleVideoRotation called - resetting to defaults")
 
         // Reset any previous transforms
-        remoteVideoView.transform = CGAffineTransform.identity
-        remoteVideoView.frame = view.bounds
+        remoteVideoView.transform = .identity
+        remoteVideoView.setNeedsLayout()
+        remoteVideoView.layoutIfNeeded()
 
         // The real fix: Set the video content mode to handle aspect ratio properly
         // For landscape iPads showing portrait video

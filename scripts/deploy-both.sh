@@ -56,30 +56,6 @@ install_app() {
   log "Install complete on $device_name"
 }
 
-launch_app() {
-  local device_name=$1
-  local udid=$2
-  local auto_role=${3:-}
-
-  log "Launching on $device_name${auto_role:+ (AUTO_ROLE=$auto_role)}"
-
-  if [[ -n "$auto_role" ]]; then
-    DEVICECTL_CHILD_AUTO_ROLE="$auto_role" \
-      xcrun devicectl device process launch --terminate-existing --device "$udid" "$APP_BUNDLE_ID" && {
-        log "Launch command issued for $device_name with AUTO_ROLE=$auto_role"
-        return 0
-      }
-  else
-    if xcrun devicectl device process launch --terminate-existing --device "$udid" "$APP_BUNDLE_ID"; then
-      log "Launch command issued for $device_name"
-      return 0
-    fi
-  fi
-
-  log "Launch failed for $device_name via devicectl; device may not support CoreDevice. Launch manually."
-  return 1
-}
-
 if ! command -v xcbeautify >/dev/null 2>&1; then
   log "xcbeautify not found; install via 'brew install xcbeautify' for pretty build logs."
   export XCBEAUTIFY_DISABLED=1
@@ -104,7 +80,5 @@ run_xcodebuild
 install_app "red"    "$RED_UDID" || exit 1
 install_app "orange" "$ORANGE_UDID" || exit 1
 
-launch_app "red"    "$RED_UDID"    "sender"
-launch_app "orange" "$ORANGE_UDID" "receiver"
-
-log "Deployment complete for red and orange."
+log "Deployment complete for red and orange (apps installed only)."
+log "Run scripts/launch-both.sh to start sender/receiver, or scripts/run-dual-automation.sh for automated taps."
