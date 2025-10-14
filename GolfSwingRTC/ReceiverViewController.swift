@@ -247,6 +247,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private let replayWindow: TimeInterval = 3.0
     private let slowMotionFactor: Double = 2.0
     private var isRemoteMirrored = false
+    private let remoteMirrorKey = "receiver.remoteMirror"
+    private var remoteMirrorApplied = false
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var frontReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var remoteResizeMode: FrameImageConverter.ResizeMode = .aspectFill
@@ -268,6 +270,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         startStatsMonitoring()
         replayButton.addTarget(self, action: #selector(handleReplayButtonTapped), for: .touchUpInside)
         remoteFlipButton.addTarget(self, action: #selector(handleRemoteFlipTapped), for: .touchUpInside)
+        isRemoteMirrored = UserDefaults.standard.bool(forKey: remoteMirrorKey)
+        remoteMirrorApplied = false
+        syncRemoteMirrorUI(persist: false)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -401,7 +406,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             remoteFlipButton.topAnchor.constraint(equalTo: remoteContainer.topAnchor, constant: 12)
         ])
 
-        updateRemoteMirrorState()
+        syncRemoteMirrorUI(persist: false)
+        applyRemoteMirrorTransformIfPossible()
         updateReplayTargetSizes()
 
         debugVideo("setupVideoView completed - container: \(String(describing: remoteVideoContainer?.frame))")
@@ -553,6 +559,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         guard !isReplaying else { return }
         guard let buffer = frame.buffer as? RTCCVPixelBuffer else { return }
         guard remoteReplayTargetSize.width > 0, remoteReplayTargetSize.height > 0 else { return }
+        if !remoteMirrorApplied {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if !self.remoteMirrorApplied {
+                    self.remoteMirrorApplied = self.applyRemoteMirrorTransformIfPossible()
+                }
+            }
+        }
         let orientation = CGImagePropertyOrientation.from(rotation: frame.rotation)
         guard let image = FrameImageConverter.shared.makeImage(from: buffer.pixelBuffer,
                                                                orientation: orientation,
@@ -656,16 +670,28 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
     @objc private func handleRemoteFlipTapped() {
         isRemoteMirrored.toggle()
-        updateRemoteMirrorState()
+        syncRemoteMirrorUI(persist: true)
+        remoteMirrorApplied = applyRemoteMirrorTransformIfPossible()
     }
 
-    private func updateRemoteMirrorState() {
+    private func syncRemoteMirrorUI(persist: Bool) {
         let scaleX: CGFloat = isRemoteMirrored ? -1 : 1
         let transform = CGAffineTransform(scaleX: scaleX, y: 1)
-        remoteVideoView?.transform = transform
         remoteReplayImageView.transform = transform
         let title = isRemoteMirrored ? "Unflip" : "Flip"
         remoteFlipButton.setTitle(title, for: .normal)
+        if persist {
+            UserDefaults.standard.set(isRemoteMirrored, forKey: remoteMirrorKey)
+        }
+    }
+
+    @discardableResult
+    private func applyRemoteMirrorTransformIfPossible() -> Bool {
+        guard let remoteView = remoteVideoView else { return false }
+        let scaleX: CGFloat = isRemoteMirrored ? -1 : 1
+        remoteView.transform = CGAffineTransform(scaleX: scaleX, y: 1)
+        remoteMirrorApplied = true
+        return true
     }
 
     private func updateReplayTargetSizes() {
@@ -921,6 +947,12 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
                 // Don't apply rotation transforms - just use proper content mode
                 self.handleVideoRotation(track: track)
+
+                if !self.remoteMirrorApplied {
+                    if !self.applyRemoteMirrorTransformIfPossible() {
+                        self.remoteMirrorApplied = false
+                    }
+                }
 
                 debugVideo("Video track state: enabled=\(track.isEnabled) readyState=\(track.readyState.rawValue)")
 
