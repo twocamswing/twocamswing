@@ -3,6 +3,125 @@ import WebRTC
 import MultipeerConnectivity
 import Foundation
 import AVFoundation
+import CoreImage
+
+private final class ReplayCaptureRenderer: NSObject, RTCVideoRenderer {
+    var onFrame: ((RTCVideoFrame) -> Void)?
+
+    func setSize(_ size: CGSize) {}
+
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        guard let frame else { return }
+        onFrame?(frame)
+    }
+}
+
+private struct ReplaySequence {
+    struct Frame {
+        let image: UIImage
+        let displayTime: TimeInterval
+    }
+
+    var frames: [Frame] = []
+    var currentIndex: Int = 0
+
+    mutating func reset() {
+        frames = []
+        currentIndex = 0
+    }
+}
+
+private final class ReplayBuffer {
+    struct Entry {
+        let image: UIImage
+        let timestamp: TimeInterval
+    }
+
+    private let maxDuration: TimeInterval
+    private var entries: [Entry] = []
+    private let queue = DispatchQueue(label: "com.golfswingrtc.replaybuffer", qos: .userInteractive)
+
+    init(maxDuration: TimeInterval = 3.0) {
+        self.maxDuration = maxDuration
+    }
+
+    func append(image: UIImage, timestamp: TimeInterval) {
+        queue.async {
+            self.entries.append(Entry(image: image, timestamp: timestamp))
+            self.trimIfNeeded(cutoff: timestamp - self.maxDuration)
+        }
+    }
+
+    func recentEntries(duration: TimeInterval) -> [Entry] {
+        let cutoff = CACurrentMediaTime() - duration
+        return queue.sync {
+            guard !entries.isEmpty else { return [] }
+            var index = entries.startIndex
+            while index < entries.endIndex && entries[index].timestamp < cutoff {
+                index = entries.index(after: index)
+            }
+            return Array(entries[index..<entries.endIndex])
+        }
+    }
+
+    private func trimIfNeeded(cutoff: TimeInterval) {
+        guard !entries.isEmpty else { return }
+        while entries.count > 1, let first = entries.first, first.timestamp < cutoff {
+            entries.removeFirst()
+        }
+    }
+}
+
+private final class FrameImageConverter {
+    static let shared = FrameImageConverter()
+
+    private let ciContext = CIContext()
+
+    private init() {}
+
+    enum ResizeMode { case aspectFit, aspectFill }
+
+    func makeImage(from pixelBuffer: CVPixelBuffer,
+                   orientation: CGImagePropertyOrientation,
+                   targetSize: CGSize?,
+                   resizeMode: ResizeMode) -> UIImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let oriented = ciImage.oriented(forExifOrientation: Int32(orientation.rawValue))
+        guard let cgImage = ciContext.createCGImage(oriented, from: oriented.extent) else { return nil }
+
+        let baseImage = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+
+        guard let targetSize, targetSize.width > 0, targetSize.height > 0 else {
+            return baseImage
+        }
+
+        let inputWidth = CGFloat(oriented.extent.width)
+        let inputHeight = CGFloat(oriented.extent.height)
+
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { ctx in
+            ctx.cgContext.setFillColor(UIColor.black.cgColor)
+            ctx.cgContext.fill(CGRect(origin: .zero, size: targetSize))
+
+            let scale: CGFloat
+            switch resizeMode {
+            case .aspectFit:
+                scale = min(targetSize.width / inputWidth, targetSize.height / inputHeight)
+            case .aspectFill:
+                scale = max(targetSize.width / inputWidth, targetSize.height / inputHeight)
+            }
+
+            let scaledWidth = inputWidth * scale
+            let scaledHeight = inputHeight * scale
+            let drawRect = CGRect(x: (targetSize.width - scaledWidth) / 2,
+                                  y: (targetSize.height - scaledHeight) / 2,
+                                  width: scaledWidth,
+                                  height: scaledHeight)
+
+            baseImage.draw(in: drawRect)
+        }
+    }
+}
 
 class DebugVideoRenderer: NSObject, RTCVideoRenderer {
     private var frameCount = 0
@@ -42,7 +161,7 @@ private final class CameraPreviewView: UIView {
     }
 }
 
-final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate {
+final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
     private var remoteVideoView: RTCMTLVideoView!
     private var remoteVideoContainer: UIView?
     private var peerConnection: RTCPeerConnection!
@@ -61,7 +180,10 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     private var frontPreviewContainer: UIView?
     private let frontPreviewView = CameraPreviewView()
     private var frontCameraSession: AVCaptureSession?
+    private var frontCameraOutput: AVCaptureVideoDataOutput?
     private let frontCameraQueue = DispatchQueue(label: "com.golfswingrtc.receiver.frontcamera")
+    private let frontCaptureOutputQueue = DispatchQueue(label: "com.golfswingrtc.receiver.frontcamera.output", qos: .userInteractive)
+    private var currentPreviewOrientation: AVCaptureVideoOrientation = .portrait
 
     // Statistics tracking
     private var statsTimer: Timer?
@@ -69,7 +191,68 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
     private var bytesReceivedLastCheck: UInt64 = 0
     private var packetsReceivedLastCheck: UInt32 = 0
 
+    // Replay infrastructure
+    private let remoteReplayBuffer = ReplayBuffer()
+    private let frontReplayBuffer = ReplayBuffer()
+    private lazy var remoteReplayRenderer: ReplayCaptureRenderer = {
+        let renderer = ReplayCaptureRenderer()
+        renderer.onFrame = { [weak self] frame in
+            self?.captureRemoteFrame(frame)
+        }
+        return renderer
+    }()
+    private let remoteReplayImageView: UIImageView = {
+        let view = UIImageView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.contentMode = .scaleAspectFill
+        view.clipsToBounds = true
+        view.isHidden = true
+        return view
+    }()
+    private let remoteFlipButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Flip", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 12
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    private let frontReplayImageView: UIImageView = {
+        let view = UIImageView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.contentMode = .scaleAspectFill
+        view.clipsToBounds = true
+        view.isHidden = true
+        return view
+    }()
+    private let replayButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Slow Replay", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 12
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+    private var isReplaying = false
+    private var replayDisplayLink: CADisplayLink?
+    private var replayStartTimestamp: CFTimeInterval?
+    private var remoteReplaySequence = ReplaySequence()
+    private var frontReplaySequence = ReplaySequence()
+    private let replayWindow: TimeInterval = 3.0
+    private let slowMotionFactor: Double = 2.0
+    private var isRemoteMirrored = false
+    private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
+    private var frontReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
+    private var remoteResizeMode: FrameImageConverter.ResizeMode = .aspectFill
+
     deinit {
+        stopReplay()
         NotificationCenter.default.removeObserver(self)
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
     }
@@ -83,6 +266,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         setupPeerConnection()
         setupSignaler()
         startStatsMonitoring()
+        replayButton.addTarget(self, action: #selector(handleReplayButtonTapped), for: .touchUpInside)
+        remoteFlipButton.addTarget(self, action: #selector(handleRemoteFlipTapped), for: .touchUpInside)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -111,6 +296,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         super.viewDidLayoutSubviews()
         frontPreviewView.previewLayer.frame = frontPreviewView.bounds
         updateFrontPreviewOrientation()
+        updateReplayTargetSizes()
     }
 
     private func setupLayout() {
@@ -136,6 +322,15 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
             frontPreviewView.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor)
         ])
 
+        frontContainer.addSubview(frontReplayImageView)
+        NSLayoutConstraint.activate([
+            frontReplayImageView.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor),
+            frontReplayImageView.trailingAnchor.constraint(equalTo: frontContainer.trailingAnchor),
+            frontReplayImageView.topAnchor.constraint(equalTo: frontContainer.topAnchor),
+            frontReplayImageView.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor)
+        ])
+        frontReplayImageView.transform = CGAffineTransform(scaleX: -1, y: 1)
+
         let frontLabel = UILabel()
         frontLabel.text = "Front Camera"
         frontLabel.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -145,6 +340,12 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         NSLayoutConstraint.activate([
             frontLabel.topAnchor.constraint(equalTo: frontContainer.topAnchor, constant: 12),
             frontLabel.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12)
+        ])
+
+        frontContainer.addSubview(replayButton)
+        NSLayoutConstraint.activate([
+            replayButton.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12),
+            replayButton.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor, constant: -12)
         ])
 
         let remoteContainer = UIView()
@@ -182,6 +383,26 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         ])
 
         remoteVideoView = remoteView
+
+        remoteContainer.addSubview(remoteReplayImageView)
+        NSLayoutConstraint.activate([
+            remoteReplayImageView.leadingAnchor.constraint(equalTo: remoteContainer.leadingAnchor),
+            remoteReplayImageView.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor),
+            remoteReplayImageView.topAnchor.constraint(equalTo: remoteContainer.topAnchor),
+            remoteReplayImageView.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor)
+        ])
+
+        remoteResizeMode = remoteView.videoContentMode == .scaleAspectFit ? .aspectFit : .aspectFill
+        remoteReplayImageView.contentMode = remoteResizeMode == .aspectFit ? .scaleAspectFit : .scaleAspectFill
+
+        remoteContainer.addSubview(remoteFlipButton)
+        NSLayoutConstraint.activate([
+            remoteFlipButton.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor, constant: -12),
+            remoteFlipButton.topAnchor.constraint(equalTo: remoteContainer.topAnchor, constant: 12)
+        ])
+
+        updateRemoteMirrorState()
+        updateReplayTargetSizes()
 
         debugVideo("setupVideoView completed - container: \(String(describing: remoteVideoContainer?.frame))")
         debugVideo("Video view added to container: \(remoteVideoView.superview != nil)")
@@ -239,8 +460,6 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
                 session.addInput(input)
             }
 
-            session.commitConfiguration()
-
             let previewLayer = frontPreviewView.previewLayer
             previewLayer.session = session
             previewLayer.videoGravity = .resizeAspectFill
@@ -253,14 +472,27 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
             if let label = frontPreviewContainer?.subviews.compactMap({ $0 as? UILabel }).first {
                 frontPreviewContainer?.bringSubviewToFront(label)
             }
+            frontPreviewContainer?.bringSubviewToFront(replayButton)
 
             frontPreviewView.isHidden = false
             frontPreviewContainer?.isHidden = false
+
+            let dataOutput = AVCaptureVideoDataOutput()
+            dataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
+            dataOutput.alwaysDiscardsLateVideoFrames = true
+            dataOutput.setSampleBufferDelegate(self, queue: frontCaptureOutputQueue)
+            if session.canAddOutput(dataOutput) {
+                session.addOutput(dataOutput)
+            }
+            frontCameraOutput = dataOutput
+
+            session.commitConfiguration()
 
             frontCameraSession = session
 
             startFrontCameraSessionIfNeeded()
             updateFrontPreviewOrientation()
+            updateReplayTargetSizes()
         } catch {
             debugVideo("Failed to configure front camera preview: \(error.localizedDescription)")
             frontPreviewContainer?.isHidden = true
@@ -283,10 +515,17 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
 
     private func updateFrontPreviewOrientation() {
         let orientation = resolvedVideoOrientation()
-        guard let connection = frontPreviewView.previewLayer.connection,
-              connection.isVideoOrientationSupported,
-              connection.videoOrientation != orientation else { return }
-        connection.videoOrientation = orientation
+        currentPreviewOrientation = orientation
+        if let connection = frontPreviewView.previewLayer.connection,
+           connection.isVideoOrientationSupported,
+           connection.videoOrientation != orientation {
+            connection.videoOrientation = orientation
+        }
+        if let dataOutputConnection = frontCameraOutput?.connection(with: .video),
+           dataOutputConnection.isVideoOrientationSupported,
+           dataOutputConnection.videoOrientation != orientation {
+            dataOutputConnection.videoOrientation = orientation
+        }
     }
 
     private func resolvedVideoOrientation() -> AVCaptureVideoOrientation {
@@ -309,6 +548,163 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
         default: return .portrait
         }
     }
+
+    private func captureRemoteFrame(_ frame: RTCVideoFrame) {
+        guard !isReplaying else { return }
+        guard let buffer = frame.buffer as? RTCCVPixelBuffer else { return }
+        guard remoteReplayTargetSize.width > 0, remoteReplayTargetSize.height > 0 else { return }
+        let orientation = CGImagePropertyOrientation.from(rotation: frame.rotation)
+        guard let image = FrameImageConverter.shared.makeImage(from: buffer.pixelBuffer,
+                                                               orientation: orientation,
+                                                               targetSize: remoteReplayTargetSize,
+                                                               resizeMode: remoteResizeMode) else { return }
+        remoteReplayBuffer.append(image: image, timestamp: CACurrentMediaTime())
+    }
+
+    private func captureFrontFrame(pixelBuffer: CVPixelBuffer) {
+        guard frontReplayTargetSize.width > 0, frontReplayTargetSize.height > 0 else { return }
+        let orientation = CGImagePropertyOrientation.from(captureOrientation: currentPreviewOrientation)
+        guard let image = FrameImageConverter.shared.makeImage(from: pixelBuffer,
+                                                               orientation: orientation,
+                                                               targetSize: frontReplayTargetSize,
+                                                               resizeMode: .aspectFill) else { return }
+        frontReplayBuffer.append(image: image, timestamp: CACurrentMediaTime())
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard !isReplaying,
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        captureFrontFrame(pixelBuffer: pixelBuffer)
+    }
+
+    @objc private func handleReplayButtonTapped() {
+        guard !isReplaying else { return }
+
+        let remoteEntries = remoteReplayBuffer.recentEntries(duration: replayWindow)
+        let frontEntries = frontReplayBuffer.recentEntries(duration: replayWindow)
+
+        guard !remoteEntries.isEmpty || !frontEntries.isEmpty else {
+            debugVideo("Replay requested but buffers are empty")
+            return
+        }
+
+        remoteReplaySequence = makeReplaySequence(from: remoteEntries, slowFactor: slowMotionFactor)
+        frontReplaySequence = makeReplaySequence(from: frontEntries, slowFactor: slowMotionFactor)
+
+        guard !remoteReplaySequence.frames.isEmpty || !frontReplaySequence.frames.isEmpty else {
+            debugVideo("Replay sequences could not be constructed")
+            return
+        }
+
+        isReplaying = true
+        replayButton.isEnabled = false
+
+        let hasRemoteReplay = !remoteReplaySequence.frames.isEmpty
+        let hasFrontReplay = !frontReplaySequence.frames.isEmpty
+
+        remoteVideoView.isHidden = hasRemoteReplay
+        remoteReplayImageView.isHidden = !hasRemoteReplay
+        frontPreviewView.isHidden = hasFrontReplay
+        frontReplayImageView.isHidden = !hasFrontReplay
+
+        remoteReplayImageView.image = remoteReplaySequence.frames.first?.image
+        frontReplayImageView.image = frontReplaySequence.frames.first?.image
+
+        replayStartTimestamp = CACurrentMediaTime()
+        let displayLink = CADisplayLink(target: self, selector: #selector(handleReplayTick(_:)))
+        displayLink.add(to: .main, forMode: .common)
+        replayDisplayLink = displayLink
+    }
+
+    @objc private func handleReplayTick(_ displayLink: CADisplayLink) {
+        guard let start = replayStartTimestamp else { return }
+        let elapsed = CACurrentMediaTime() - start
+
+        let remoteFinished = advance(sequence: &remoteReplaySequence, elapsed: elapsed, imageView: remoteReplayImageView)
+        let frontFinished = advance(sequence: &frontReplaySequence, elapsed: elapsed, imageView: frontReplayImageView)
+
+        if remoteFinished && frontFinished {
+            stopReplay()
+        }
+    }
+
+    private func advance(sequence: inout ReplaySequence, elapsed: TimeInterval, imageView: UIImageView) -> Bool {
+        guard !sequence.frames.isEmpty else { return true }
+
+        while sequence.currentIndex < sequence.frames.count,
+              sequence.frames[sequence.currentIndex].displayTime <= elapsed {
+            imageView.image = sequence.frames[sequence.currentIndex].image
+            sequence.currentIndex += 1
+        }
+
+        return sequence.currentIndex >= sequence.frames.count
+    }
+
+    private func stopReplay() {
+        replayDisplayLink?.invalidate()
+        replayDisplayLink = nil
+        replayStartTimestamp = nil
+        remoteReplayImageView.isHidden = true
+        frontReplayImageView.isHidden = true
+        remoteVideoView.isHidden = false
+        frontPreviewView.isHidden = false
+        isReplaying = false
+        replayButton.isEnabled = true
+        remoteReplaySequence.reset()
+        frontReplaySequence.reset()
+    }
+
+    @objc private func handleRemoteFlipTapped() {
+        isRemoteMirrored.toggle()
+        updateRemoteMirrorState()
+    }
+
+    private func updateRemoteMirrorState() {
+        let scaleX: CGFloat = isRemoteMirrored ? -1 : 1
+        let transform = CGAffineTransform(scaleX: scaleX, y: 1)
+        remoteVideoView?.transform = transform
+        remoteReplayImageView.transform = transform
+        let title = isRemoteMirrored ? "Unflip" : "Flip"
+        remoteFlipButton.setTitle(title, for: .normal)
+    }
+
+    private func updateReplayTargetSizes() {
+        if let remoteView = remoteVideoView {
+            remoteReplayTargetSize = computeTargetSize(for: remoteView.bounds.size)
+        }
+        frontReplayTargetSize = computeTargetSize(for: frontPreviewView.bounds.size)
+    }
+
+    private func computeTargetSize(for bounds: CGSize) -> CGSize {
+        let maxDimension: CGFloat = 720
+        let width = max(bounds.width, 1)
+        let height = max(bounds.height, 1)
+        let maxSide = max(width, height)
+        let scale = maxSide > maxDimension ? maxDimension / maxSide : 1
+        return CGSize(width: width * scale, height: height * scale)
+    }
+
+    private func makeReplaySequence(from entries: [ReplayBuffer.Entry], slowFactor: Double) -> ReplaySequence {
+        guard !entries.isEmpty else { return ReplaySequence() }
+        guard let first = entries.first, let last = entries.last else { return ReplaySequence() }
+
+        let totalDuration = max(last.timestamp - first.timestamp, 1.0 / 30.0)
+        let playbackDuration = totalDuration * slowFactor
+        let count = entries.count
+
+        if count == 1 {
+            return ReplaySequence(frames: [ReplaySequence.Frame(image: first.image, displayTime: 0)], currentIndex: 0)
+        }
+
+        let step = playbackDuration / Double(count - 1)
+        var frames: [ReplaySequence.Frame] = []
+        frames.reserveCapacity(count)
+        for (index, entry) in entries.enumerated() {
+            frames.append(ReplaySequence.Frame(image: entry.image, displayTime: step * Double(index)))
+        }
+        return ReplaySequence(frames: frames, currentIndex: 0)
+    }
+
     private func setupVideoViewDiagnostics() {
         // Monitor video view rendering state periodically
         Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
@@ -319,7 +715,6 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
             self.logVideoViewState()
         }
     }
-
     private func logVideoViewState() {
         debugVideo("=== VIDEO VIEW STATE ===")
         debugVideo("Frame: \(remoteVideoView.frame)")
@@ -520,6 +915,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
                 debugVideo("Attaching track to debug renderer...")
                 track.add(self.debugRenderer)
                 debugVideo("Debug renderer attachment completed")
+
+                track.add(self.remoteReplayRenderer)
+                debugVideo("Replay renderer attached")
 
                 // Don't apply rotation transforms - just use proper content mode
                 self.handleVideoRotation(track: track)
@@ -742,6 +1140,28 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate 
             if packetLossRate > 5.0 {
                 print("  🚨 HIGH PACKET LOSS: \(String(format: "%.1f", packetLossRate))%")
             }
+        }
+    }
+}
+
+private extension CGImagePropertyOrientation {
+    static func from(rotation: RTCVideoRotation) -> CGImagePropertyOrientation {
+        switch rotation {
+        case ._0: return .up
+        case ._90: return .right
+        case ._180: return .down
+        case ._270: return .left
+        @unknown default: return .up
+        }
+    }
+
+    static func from(captureOrientation: AVCaptureVideoOrientation) -> CGImagePropertyOrientation {
+        switch captureOrientation {
+        case .portrait: return .right
+        case .portraitUpsideDown: return .left
+        case .landscapeRight: return .up
+        case .landscapeLeft: return .down
+        @unknown default: return .up
         }
     }
 }
