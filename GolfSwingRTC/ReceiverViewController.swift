@@ -70,6 +70,12 @@ private final class ReplayBuffer {
             entries.removeFirst()
         }
     }
+
+    func clear() {
+        queue.async {
+            self.entries.removeAll()
+        }
+    }
 }
 
 private final class FrameImageConverter {
@@ -84,7 +90,8 @@ private final class FrameImageConverter {
     func makeImage(from pixelBuffer: CVPixelBuffer,
                    orientation: CGImagePropertyOrientation,
                    targetSize: CGSize?,
-                   resizeMode: ResizeMode) -> UIImage? {
+                   resizeMode: ResizeMode,
+                   mirrorHorizontally: Bool = false) -> UIImage? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let oriented = ciImage.oriented(forExifOrientation: Int32(orientation.rawValue))
         guard let cgImage = ciContext.createCGImage(oriented, from: oriented.extent) else { return nil }
@@ -117,6 +124,12 @@ private final class FrameImageConverter {
                                   y: (targetSize.height - scaledHeight) / 2,
                                   width: scaledWidth,
                                   height: scaledHeight)
+
+            if mirrorHorizontally {
+                ctx.cgContext.translateBy(x: drawRect.midX, y: drawRect.midY)
+                ctx.cgContext.scaleBy(x: -1, y: 1)
+                ctx.cgContext.translateBy(x: -drawRect.midX, y: -drawRect.midY)
+            }
 
             baseImage.draw(in: drawRect)
         }
@@ -211,7 +224,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     }()
     private let remoteFlipButton: UIButton = {
         let button = UIButton(type: .system)
-        button.setTitle("Flip", for: .normal)
+        button.setTitle("Remote Flip", for: .normal)
         button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
         button.backgroundColor = UIColor.black.withAlphaComponent(0.6)
         button.setTitleColor(.white, for: .normal)
@@ -239,6 +252,17 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
+    private let localFlipButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Local Flip", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        button.setTitleColor(.white, for: .normal)
+        button.layer.cornerRadius = 12
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
     private var isReplaying = false
     private var replayDisplayLink: CADisplayLink?
     private var replayStartTimestamp: CFTimeInterval?
@@ -249,6 +273,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var isRemoteMirrored = false
     private let remoteMirrorKey = "receiver.remoteMirror"
     private var remoteMirrorApplied = false
+    private var isLocalMirrored = true
+    private let localMirrorKey = "receiver.localMirror"
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var frontReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var remoteResizeMode: FrameImageConverter.ResizeMode = .aspectFill
@@ -270,9 +296,15 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         startStatsMonitoring()
         replayButton.addTarget(self, action: #selector(handleReplayButtonTapped), for: .touchUpInside)
         remoteFlipButton.addTarget(self, action: #selector(handleRemoteFlipTapped), for: .touchUpInside)
+        localFlipButton.addTarget(self, action: #selector(handleLocalFlipTapped), for: .touchUpInside)
         isRemoteMirrored = UserDefaults.standard.bool(forKey: remoteMirrorKey)
         remoteMirrorApplied = false
         syncRemoteMirrorUI(persist: false)
+        if UserDefaults.standard.object(forKey: localMirrorKey) != nil {
+            isLocalMirrored = UserDefaults.standard.bool(forKey: localMirrorKey)
+        }
+        syncLocalMirrorUI(persist: false)
+        applyLocalMirrorTransform()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -334,7 +366,6 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             frontReplayImageView.topAnchor.constraint(equalTo: frontContainer.topAnchor),
             frontReplayImageView.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor)
         ])
-        frontReplayImageView.transform = CGAffineTransform(scaleX: -1, y: 1)
 
         let frontLabel = UILabel()
         frontLabel.text = "Front Camera"
@@ -351,6 +382,12 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         NSLayoutConstraint.activate([
             replayButton.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12),
             replayButton.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor, constant: -12)
+        ])
+
+        frontContainer.addSubview(localFlipButton)
+        NSLayoutConstraint.activate([
+            localFlipButton.trailingAnchor.constraint(equalTo: frontContainer.trailingAnchor, constant: -12),
+            localFlipButton.topAnchor.constraint(equalTo: frontContainer.topAnchor, constant: 12)
         ])
 
         let remoteContainer = UIView()
@@ -498,6 +535,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
             startFrontCameraSessionIfNeeded()
             updateFrontPreviewOrientation()
+            applyLocalMirrorTransform()
             updateReplayTargetSizes()
         } catch {
             debugVideo("Failed to configure front camera preview: \(error.localizedDescription)")
@@ -578,10 +616,15 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private func captureFrontFrame(pixelBuffer: CVPixelBuffer) {
         guard frontReplayTargetSize.width > 0, frontReplayTargetSize.height > 0 else { return }
         let orientation = CGImagePropertyOrientation.from(captureOrientation: currentPreviewOrientation)
+        let connectionMirrored = frontCameraOutput?
+            .connection(with: .video)?
+            .isVideoMirrored ?? false
+        let mirrorForReplay = isLocalMirrored && !connectionMirrored
         guard let image = FrameImageConverter.shared.makeImage(from: pixelBuffer,
                                                                orientation: orientation,
                                                                targetSize: frontReplayTargetSize,
-                                                               resizeMode: .aspectFill) else { return }
+                                                               resizeMode: .aspectFill,
+                                                               mirrorHorizontally: mirrorForReplay) else { return }
         frontReplayBuffer.append(image: image, timestamp: CACurrentMediaTime())
     }
 
@@ -623,6 +666,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         remoteReplayImageView.image = remoteReplaySequence.frames.first?.image
         frontReplayImageView.image = frontReplaySequence.frames.first?.image
+        frontReplayImageView.transform = .identity
 
         replayStartTimestamp = CACurrentMediaTime()
         let displayLink = CADisplayLink(target: self, selector: #selector(handleReplayTick(_:)))
@@ -678,7 +722,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         let scaleX: CGFloat = isRemoteMirrored ? -1 : 1
         let transform = CGAffineTransform(scaleX: scaleX, y: 1)
         remoteReplayImageView.transform = transform
-        let title = isRemoteMirrored ? "Unflip" : "Flip"
+        let title = isRemoteMirrored ? "Remote Unflip" : "Remote Flip"
         remoteFlipButton.setTitle(title, for: .normal)
         if persist {
             UserDefaults.standard.set(isRemoteMirrored, forKey: remoteMirrorKey)
@@ -692,6 +736,39 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         remoteView.transform = CGAffineTransform(scaleX: scaleX, y: 1)
         remoteMirrorApplied = true
         return true
+    }
+
+    @objc private func handleLocalFlipTapped() {
+        isLocalMirrored.toggle()
+        syncLocalMirrorUI(persist: true)
+        applyLocalMirrorTransform()
+        frontReplayBuffer.clear()
+    }
+
+    private func syncLocalMirrorUI(persist: Bool) {
+        let title = isLocalMirrored ? "Local Unflip" : "Local Flip"
+        localFlipButton.setTitle(title, for: .normal)
+        if persist {
+            UserDefaults.standard.set(isLocalMirrored, forKey: localMirrorKey)
+        }
+    }
+
+    private func applyLocalMirrorTransform() {
+        if let connection = frontPreviewView.previewLayer.connection,
+           connection.isVideoMirroringSupported {
+            if connection.automaticallyAdjustsVideoMirroring {
+                connection.automaticallyAdjustsVideoMirroring = false
+            }
+            connection.isVideoMirrored = isLocalMirrored
+        }
+
+        if let dataOutputConnection = frontCameraOutput?.connection(with: .video),
+           dataOutputConnection.isVideoMirroringSupported {
+            if dataOutputConnection.automaticallyAdjustsVideoMirroring {
+                dataOutputConnection.automaticallyAdjustsVideoMirroring = false
+            }
+            dataOutputConnection.isVideoMirrored = isLocalMirrored
+        }
     }
 
     private func updateReplayTargetSizes() {
@@ -1187,13 +1264,13 @@ private extension CGImagePropertyOrientation {
         }
     }
 
-    static func from(captureOrientation: AVCaptureVideoOrientation) -> CGImagePropertyOrientation {
+    static func from(captureOrientation: AVCaptureVideoOrientation, mirrored: Bool = false) -> CGImagePropertyOrientation {
         switch captureOrientation {
-        case .portrait: return .right
-        case .portraitUpsideDown: return .left
-        case .landscapeRight: return .up
-        case .landscapeLeft: return .down
-        @unknown default: return .up
+        case .portrait: return mirrored ? .leftMirrored : .right
+        case .portraitUpsideDown: return mirrored ? .rightMirrored : .left
+        case .landscapeRight: return mirrored ? .upMirrored : .up
+        case .landscapeLeft: return mirrored ? .downMirrored : .down
+        @unknown default: return mirrored ? .upMirrored : .up
         }
     }
 }
