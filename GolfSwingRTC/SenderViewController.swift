@@ -53,6 +53,7 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         config.rtcpMuxPolicy = .require
         config.iceCandidatePoolSize = 2
         config.continualGatheringPolicy = .gatherContinually
+        config.disableLinkLocalNetworks = false
 
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         peerConnection = factory.peerConnection(with: config, constraints: constraints, delegate: self)
