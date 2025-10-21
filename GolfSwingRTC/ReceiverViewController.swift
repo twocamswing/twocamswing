@@ -4,6 +4,7 @@ import MultipeerConnectivity
 import Foundation
 import AVFoundation
 import CoreImage
+import QuartzCore
 
 private final class ReplayCaptureRenderer: NSObject, RTCVideoRenderer {
     var onFrame: ((RTCVideoFrame) -> Void)?
@@ -754,20 +755,38 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     }
 
     private func applyLocalMirrorTransform() {
-        if let connection = frontPreviewView.previewLayer.connection,
-           connection.isVideoMirroringSupported {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if let connection = frontPreviewView.previewLayer.connection {
             if connection.automaticallyAdjustsVideoMirroring {
                 connection.automaticallyAdjustsVideoMirroring = false
             }
-            connection.isVideoMirrored = isLocalMirrored
+            if connection.isVideoOrientationSupported,
+               connection.videoOrientation != currentPreviewOrientation {
+                connection.videoOrientation = currentPreviewOrientation
+            }
+            if connection.isVideoMirroringSupported {
+                connection.isVideoMirrored = isLocalMirrored
+            }
         }
+        CATransaction.commit()
 
-        if let dataOutputConnection = frontCameraOutput?.connection(with: .video),
-           dataOutputConnection.isVideoMirroringSupported {
+        frontCameraQueue.async { [weak self] in
+            guard let self = self,
+                  let dataOutputConnection = self.frontCameraOutput?.connection(with: .video) else {
+                return
+            }
+
             if dataOutputConnection.automaticallyAdjustsVideoMirroring {
                 dataOutputConnection.automaticallyAdjustsVideoMirroring = false
             }
-            dataOutputConnection.isVideoMirrored = isLocalMirrored
+            if dataOutputConnection.isVideoOrientationSupported,
+               dataOutputConnection.videoOrientation != self.currentPreviewOrientation {
+                dataOutputConnection.videoOrientation = self.currentPreviewOrientation
+            }
+            if dataOutputConnection.isVideoMirroringSupported {
+                dataOutputConnection.isVideoMirrored = self.isLocalMirrored
+            }
         }
     }
 
