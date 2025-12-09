@@ -17,6 +17,16 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
     private let signaler = MPCSignaler(role: .advertiser)
     private var pendingCandidates: [RTCIceCandidate] = []
 
+    // MARK: - MPC Video Fallback
+    private var useMPCVideo = false  // Set to true when WebRTC ICE fails
+    private var mpcFrameCount = 0
+    private let mpcTargetFPS: Double = 30  // Target 30 FPS for smooth video
+    private var lastMPCFrameTime: TimeInterval = 0
+    private var iceCheckingStartTime: Date?
+    private let iceTimeoutSeconds: TimeInterval = 15  // Enable MPC fallback after 15s of ICE checking
+    private let h264Encoder = HardwareH264Encoder()
+    private var encoderConfigured = false
+
     // MARK: - UI
     private var preview: RTCMTLVideoView!
 
@@ -102,6 +112,7 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
                 }
 
             case .candidate(let candSdp, let sdpMid, let sdpMLineIndex):
+                debugCandidate("SENDER", direction: "RECEIVED", candidate: candSdp)
                 let cand = RTCIceCandidate(
                     sdp: candSdp,
                     sdpMLineIndex: sdpMLineIndex,
@@ -110,14 +121,12 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
                 if self.peerConnection.remoteDescription != nil {
                     self.peerConnection.add(cand) { error in
                         if let error = error {
-                            print("Sender: failed to add candidate: \(error)")
-                        } else {
-                            print("Sender: applied candidate successfully")
+                            debugICE("SENDER failed to add candidate: \(error)")
                         }
                     }
                 } else {
                     self.pendingCandidates.append(cand)
-                    print("Sender: queued candidate")
+                    debugICE("SENDER queued candidate (no remote desc yet)")
                 }
 
             case .offer:
@@ -364,11 +373,17 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         peerConnection.statistics { [weak self] stats in
             guard let self = self else { return }
 
+            let shouldLogICE = DebugFlags.iceDetailed
+            let shouldLogStats = DebugFlags.webrtcStats
+            guard shouldLogICE || shouldLogStats else { return }
+
             let currentTime = Date()
             let timeDiff = currentTime.timeIntervalSince(self.lastStatsTime)
             self.lastStatsTime = currentTime
 
-            print("🔍 SENDER WEBRTC STATS (Δ\(String(format: "%.1f", timeDiff))s):")
+            if shouldLogStats {
+                print("🔍 SENDER WEBRTC STATS (Δ\(String(format: "%.1f", timeDiff))s):")
+            }
 
             var videoSent: UInt64 = 0
             var audioSent: UInt64 = 0
@@ -382,8 +397,30 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
             var bitrateMbps: Double = 0
 
             for stat in stats.statistics.values {
+                if shouldLogICE, stat.type == "candidate-pair" {
+                    let state = stat.values["state"] as? String ?? "?"
+                    if state == "succeeded" || state == "in-progress" {
+                        let pairId = stat.values["id"].map { String(describing: $0) } ?? "?"
+                        let nominated = stat.values["nominated"].map { String(describing: $0) } ?? "?"
+                        let localType = stat.values["localCandidateType"].map { String(describing: $0) } ?? "?"
+                        let remoteType = stat.values["remoteCandidateType"].map { String(describing: $0) } ?? "?"
+                        print("  Pair \(pairId): state=\(state) nominated=\(nominated) local=\(localType) remote=\(remoteType)")
+
+                        if let localId = stat.values["localCandidateId"] as? String,
+                           let local = stats.statistics[localId]?.values {
+                            print("    ↳ localId=\(localId) data=\(local)")
+                        }
+                        if let remoteId = stat.values["remoteCandidateId"] as? String,
+                           let remote = stats.statistics[remoteId]?.values {
+                            print("    ↳ remoteId=\(remoteId) data=\(remote)")
+                        }
+                        print("    ↳ raw: \(stat.values)")
+                    }
+                }
+
                 // Outbound RTP (what we're sending)
-                if stat.type == "outbound-rtp" && stat.values["mediaType"] as? String == "video" {
+                if shouldLogStats,
+                   stat.type == "outbound-rtp" && stat.values["mediaType"] as? String == "video" {
                     if let bytes = stat.values["bytesSent"] as? NSNumber {
                         bytesSent = bytes.uint64Value
                         videoSent = bytesSent
@@ -409,7 +446,7 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
                 }
 
                 // Candidate pair (connection quality)
-                if stat.type == "candidate-pair" && stat.values["state"] as? String == "succeeded" {
+                if shouldLogStats, stat.type == "candidate-pair" && stat.values["state"] as? String == "succeeded" {
                     if let rtt = stat.values["currentRoundTripTime"] as? NSNumber {
                         print("  📡 RTT: \(String(format: "%.0f", rtt.doubleValue * 1000))ms")
                     }
@@ -460,6 +497,94 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         }
     }
 
+    // MARK: - ICE Pair Monitoring
+
+    private var icePairTimer: Timer?
+
+    private func startICEPairMonitoring() {
+        guard DebugFlags.icePairChecks else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.icePairTimer?.invalidate()
+            self?.icePairTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+                self?.logICECandidatePairs()
+            }
+            // Fire immediately once
+            self?.logICECandidatePairs()
+        }
+    }
+
+    private func stopICEPairMonitoring() {
+        icePairTimer?.invalidate()
+        icePairTimer = nil
+    }
+
+    private func logICECandidatePairs() {
+        guard DebugFlags.icePairChecks, peerConnection != nil else { return }
+
+        peerConnection.statistics { [weak self] stats in
+            guard self != nil else { return }
+
+            var pairs: [(state: String, local: String, remote: String, nominated: Bool, bytesSent: UInt64, bytesRecv: UInt64)] = []
+
+            // First pass: collect candidate info - use stat.id as key (not values["id"])
+            var candidateInfo: [String: String] = [:]
+            for (statId, stat) in stats.statistics {
+                if stat.type == "local-candidate" || stat.type == "remote-candidate" {
+                    let ip = stat.values["address"] as? String ?? stat.values["ip"] as? String ?? "?"
+                    let port = stat.values["port"] as? Int ?? 0
+                    let proto = stat.values["protocol"] as? String ?? "?"
+                    let candidateType = stat.values["candidateType"] as? String ?? "?"
+                    candidateInfo[statId] = "\(candidateType) \(ip):\(port) (\(proto))"
+                }
+            }
+
+            // Second pass: collect pairs
+            for stat in stats.statistics.values {
+                if stat.type == "candidate-pair" {
+                    let state = stat.values["state"] as? String ?? "?"
+                    let nominated = stat.values["nominated"] as? Bool ?? false
+                    let localId = stat.values["localCandidateId"] as? String ?? ""
+                    let remoteId = stat.values["remoteCandidateId"] as? String ?? ""
+                    let bytesSent = (stat.values["bytesSent"] as? NSNumber)?.uint64Value ?? 0
+                    let bytesRecv = (stat.values["bytesReceived"] as? NSNumber)?.uint64Value ?? 0
+
+                    let localDesc = candidateInfo[localId] ?? localId
+                    let remoteDesc = candidateInfo[remoteId] ?? remoteId
+
+                    pairs.append((state, localDesc, remoteDesc, nominated, bytesSent, bytesRecv))
+                }
+            }
+
+            // Log summary
+            if pairs.isEmpty {
+                debugICEPairs("SENDER ICE: No candidate pairs yet")
+                return
+            }
+
+            let inProgress = pairs.filter { $0.state == "in-progress" }.count
+            let succeeded = pairs.filter { $0.state == "succeeded" }.count
+            let failed = pairs.filter { $0.state == "failed" }.count
+            let waiting = pairs.filter { $0.state == "waiting" }.count
+            let frozen = pairs.filter { $0.state == "frozen" }.count
+
+            debugICEPairs("SENDER ICE: \(pairs.count) pairs - succeeded:\(succeeded) in-progress:\(inProgress) waiting:\(waiting) frozen:\(frozen) failed:\(failed)")
+
+            // Log active/interesting pairs
+            for pair in pairs where pair.state == "in-progress" || pair.state == "succeeded" {
+                let marker = pair.nominated ? "★" : " "
+                debugICEPairs("  \(marker) [\(pair.state)] local:\(pair.local) ↔ remote:\(pair.remote) sent:\(pair.bytesSent) recv:\(pair.bytesRecv)")
+            }
+
+            // Log failed pairs to understand why
+            if failed > 0 && succeeded == 0 {
+                debugICEPairs("  ⚠️ Failed pairs:")
+                for pair in pairs.prefix(5) where pair.state == "failed" {
+                    debugICEPairs("    ✗ local:\(pair.local) ↔ remote:\(pair.remote)")
+                }
+            }
+        }
+    }
+
     // MARK: - Offer / ICE
 
     private func makeOffer() {
@@ -471,7 +596,7 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
 
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: ["OfferToReceiveVideo":"false"],
-            optionalConstraints: nil
+            optionalConstraints: ["CandidateNetworkPolicy": "low_cost"]
         )
         peerConnection.offer(for: constraints) { [weak self] sdp, err in
             guard let self = self, let sdp = sdp, err == nil else {
@@ -553,14 +678,58 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         case .count: stateName = "count"
         @unknown default: stateName = "unknown(\(newState.rawValue))"
         }
-        print("Sender: ICE state → \(stateName) (\(newState.rawValue))")
+        debugICE("SENDER state → \(stateName)")
 
-        if newState == .failed {
-            print("Sender: ICE CONNECTION FAILED - attempting to restart")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.restartIce()
+        if newState == .checking {
+            startICEPairMonitoring()
+            // Start timeout timer for MPC fallback
+            iceCheckingStartTime = Date()
+            scheduleICETimeoutCheck()
+        } else if newState == .connected || newState == .completed {
+            stopICEPairMonitoring()
+            iceCheckingStartTime = nil
+            debugICE("SENDER ✅ ICE connected successfully!")
+            // Disable MPC video fallback since WebRTC is working
+            if useMPCVideo {
+                useMPCVideo = false
+                print("Sender: WebRTC connected, disabling MPC video fallback")
+            }
+        } else if newState == .failed {
+            stopICEPairMonitoring()
+            iceCheckingStartTime = nil
+            debugICE("SENDER ❌ ICE CONNECTION FAILED - enabling MPC video fallback")
+            // Enable MPC video streaming as fallback
+            enableMPCVideoFallback()
+        } else if newState == .disconnected {
+            debugICE("SENDER ⚠️ ICE disconnected")
+        }
+    }
+
+    private func scheduleICETimeoutCheck() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + iceTimeoutSeconds) { [weak self] in
+            self?.checkICETimeout()
+        }
+    }
+
+    private func checkICETimeout() {
+        guard let startTime = iceCheckingStartTime else { return }
+
+        let elapsed = Date().timeIntervalSince(startTime)
+        if elapsed >= iceTimeoutSeconds {
+            // ICE has been checking for too long without success
+            let iceState = peerConnection?.iceConnectionState ?? .new
+            if iceState == .checking || iceState == .new {
+                debugICE("SENDER ⏰ ICE timeout after \(Int(elapsed))s - enabling MPC video fallback")
+                enableMPCVideoFallback()
             }
         }
+    }
+
+    private func enableMPCVideoFallback() {
+        guard !useMPCVideo else { return }
+        useMPCVideo = true
+        mpcFrameCount = 0
+        print("Sender: 📹 MPC video fallback ENABLED - streaming via MultipeerConnectivity")
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
@@ -568,8 +737,7 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        let candidateString = candidate.sdp
-        print("Sender: generated candidate: \(candidateString.prefix(60))...")
+        debugCandidate("SENDER", direction: "GENERATED", candidate: candidate.sdp)
         signaler.send(SignalMessage.candidate(candidate))
     }
 
@@ -583,13 +751,59 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         frameCount += 1
         lastFrameTime = Date()
 
-        // Log every 30 frames to avoid spam
-        if frameCount % 30 == 0 {
-            print("Sender: Captured frame \(frameCount), size: \(frame.width)x\(frame.height)")
+        // Forward to video source (for local preview and WebRTC if connected)
+        videoSource.capturer(capturer, didCapture: frame)
+
+        // If MPC video fallback is enabled, also send via MPC
+        if useMPCVideo {
+            sendFrameViaMPC(frame)
+        }
+    }
+
+    // MARK: - MPC Video Streaming (Hardware H.264)
+
+    private func sendFrameViaMPC(_ frame: RTCVideoFrame) {
+        // Rate limit to target FPS
+        let now = CACurrentMediaTime()
+        let minInterval = 1.0 / mpcTargetFPS
+        guard now - lastMPCFrameTime >= minInterval else { return }
+        lastMPCFrameTime = now
+
+        // Only send if MPC is connected
+        guard signaler.isConnected else { return }
+
+        guard let pixelBuffer = (frame.buffer as? RTCCVPixelBuffer)?.pixelBuffer else { return }
+
+        // Configure encoder on first frame
+        if !encoderConfigured {
+            let width = Int32(CVPixelBufferGetWidth(pixelBuffer))
+            let height = Int32(CVPixelBufferGetHeight(pixelBuffer))
+            h264Encoder.configure(width: width, height: height)
+            encoderConfigured = true
         }
 
-        // Forward to video source
-        videoSource.capturer(capturer, didCapture: frame)
+        // Get rotation from frame (0=0°, 1=90°, 2=180°, 3=270°)
+        let rotation: Int
+        switch frame.rotation {
+        case ._0: rotation = 0
+        case ._90: rotation = 1
+        case ._180: rotation = 2
+        case ._270: rotation = 3
+        @unknown default: rotation = 0
+        }
+
+        // Encode using hardware H.264
+        let timestamp = CMTime(value: Int64(mpcFrameCount), timescale: 30)
+        if let (nalData, isKeyframe) = h264Encoder.encodeSync(pixelBuffer: pixelBuffer, timestamp: timestamp) {
+            // Send via MPC with rotation metadata
+            signaler.sendVideoFrame(nalData, rotation: rotation)
+
+            mpcFrameCount += 1
+            if mpcFrameCount % 60 == 0 {
+                let kf = isKeyframe ? " [KF]" : ""
+                print("Sender: 📹 H.264 frame \(mpcFrameCount), \(nalData.count / 1024)KB\(kf), rot:\(rotation * 90)°")
+            }
+        }
     }
 
 }

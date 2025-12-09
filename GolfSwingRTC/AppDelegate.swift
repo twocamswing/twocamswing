@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import WebRTC
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -13,7 +14,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        RTCInitFieldTrialDictionary([
+            "IncludeAWDLNetwork": kRTCFieldTrialEnabledValue,
+            "UseNWPathMonitor": kRTCFieldTrialEnabledValue
+        ])
         return true
     }
 
@@ -33,4 +37,3 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
 }
-

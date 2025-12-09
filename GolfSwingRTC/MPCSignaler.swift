@@ -3,6 +3,9 @@ import MultipeerConnectivity
 
 enum Role { case advertiser, browser }
 
+// Magic bytes to distinguish video frames from signaling messages
+private let videoFrameMagic: [UInt8] = [0x56, 0x46, 0x52, 0x4D] // "VFRM"
+
 final class MPCSignaler: NSObject {
     private let serviceType = "webrtc-signal"
     private let peerID = MCPeerID(displayName: UIDevice.current.name)
@@ -21,6 +24,7 @@ final class MPCSignaler: NSObject {
     // Callbacks
     var onMessage: ((SignalMessage) -> Void)?
     var onConnected: (() -> Void)?
+    var onVideoFrame: ((Data, Int) -> Void)?  // Callback for received video frames: (h264Data, rotation)
 
     init(role: Role) {
         super.init()
@@ -93,6 +97,31 @@ final class MPCSignaler: NSObject {
         print("MPC: Successfully flushed \(successCount)/\(outbox.count) messages")
         outbox.removeAll()
     }
+
+    // MARK: - Video Frame Streaming
+
+    /// Send a video frame (H.264 data) with rotation metadata to connected peers
+    /// Format: [4 bytes magic] [1 byte rotation: 0=0°, 1=90°, 2=180°, 3=270°] [H.264 NAL data]
+    func sendVideoFrame(_ h264Data: Data, rotation: Int = 0) {
+        guard !session.connectedPeers.isEmpty else { return }
+
+        // Prepend magic bytes and rotation to distinguish from signaling messages
+        var frameData = Data(videoFrameMagic)
+        frameData.append(UInt8(rotation & 0x03))  // 2 bits for rotation (0-3)
+        frameData.append(h264Data)
+
+        do {
+            // Use unreliable mode for lower latency - dropped frames are acceptable
+            try session.send(frameData, toPeers: session.connectedPeers, with: .unreliable)
+        } catch {
+            // Don't log every frame error to avoid spam
+        }
+    }
+
+    /// Check if MPC is connected to peers
+    var isConnected: Bool {
+        return !session.connectedPeers.isEmpty
+    }
 }
 
 extension MPCSignaler: MCSessionDelegate {
@@ -118,6 +147,22 @@ extension MPCSignaler: MCSessionDelegate {
     }
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+        // Check if this is a video frame (starts with magic bytes)
+        // Format: [4 bytes magic] [1 byte rotation] [H.264 data]
+        if data.count > 5 {
+            let prefix = [UInt8](data.prefix(4))
+            if prefix == videoFrameMagic {
+                // Extract rotation byte and H.264 data after magic bytes
+                let rotation = Int(data[4])
+                let h264Data = data.dropFirst(5)
+                DispatchQueue.main.async {
+                    self.onVideoFrame?(Data(h264Data), rotation)
+                }
+                return
+            }
+        }
+
+        // Otherwise, treat as signaling message
         print("MPC: Received \(data.count) bytes from \(peerID.displayName)")
 
         guard let msg = try? JSONDecoder().decode(SignalMessage.self, from: data) else {

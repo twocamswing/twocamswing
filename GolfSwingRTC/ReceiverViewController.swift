@@ -196,6 +196,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var frontCameraSession: AVCaptureSession?
     private var frontCameraOutput: AVCaptureVideoDataOutput?
     private let frontCameraQueue = DispatchQueue(label: "com.golfswingrtc.receiver.frontcamera")
+    private var isConfiguringFrontCamera = false
     private let frontCaptureOutputQueue = DispatchQueue(label: "com.golfswingrtc.receiver.frontcamera.output", qos: .userInteractive)
     private var currentPreviewOrientation: AVCaptureVideoOrientation = .portrait
 
@@ -204,6 +205,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var lastStatsTime = Date()
     private var bytesReceivedLastCheck: UInt64 = 0
     private var packetsReceivedLastCheck: UInt32 = 0
+
+    // MPC Video Fallback with H.264 decoding
+    private var mpcVideoImageView: UIImageView?
+    private var mpcFrameCount = 0
+    private var usingMPCVideo = false
+    private let h264Decoder = HardwareH264Decoder()
+    private let mpcCIContext = CIContext()
+    private var currentMPCRotation: Int = 0  // Store current rotation for decoded frames
 
     // Replay infrastructure
     private let remoteReplayBuffer = ReplayBuffer()
@@ -444,6 +453,21 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             remoteFlipButton.topAnchor.constraint(equalTo: remoteContainer.topAnchor, constant: 12)
         ])
 
+        // Setup MPC video fallback image view (hidden by default)
+        let mpcImageView = UIImageView()
+        mpcImageView.translatesAutoresizingMaskIntoConstraints = false
+        mpcImageView.contentMode = .scaleAspectFit
+        mpcImageView.backgroundColor = .black
+        mpcImageView.isHidden = true
+        remoteContainer.addSubview(mpcImageView)
+        NSLayoutConstraint.activate([
+            mpcImageView.leadingAnchor.constraint(equalTo: remoteContainer.leadingAnchor),
+            mpcImageView.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor),
+            mpcImageView.topAnchor.constraint(equalTo: remoteContainer.topAnchor),
+            mpcImageView.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor)
+        ])
+        mpcVideoImageView = mpcImageView
+
         syncRemoteMirrorUI(persist: false)
         applyRemoteMirrorTransformIfPossible()
         updateReplayTargetSizes()
@@ -494,53 +518,64 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             return
         }
 
-        do {
-            let session = AVCaptureSession()
-            session.beginConfiguration()
-            session.sessionPreset = .medium
+        frontCameraQueue.async { [weak self] in
+            guard let self = self, !self.isConfiguringFrontCamera else { return }
+            self.isConfiguringFrontCamera = true
+            defer { self.isConfiguringFrontCamera = false }
+            do {
+                let session = AVCaptureSession()
+                session.beginConfiguration()
+                session.sessionPreset = .medium
 
-            let input = try AVCaptureDeviceInput(device: device)
-            if session.canAddInput(input) {
-                session.addInput(input)
+                let input = try AVCaptureDeviceInput(device: device)
+                if session.canAddInput(input) {
+                    session.addInput(input)
+                }
+
+                let dataOutput = AVCaptureVideoDataOutput()
+                dataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
+                dataOutput.alwaysDiscardsLateVideoFrames = true
+                dataOutput.setSampleBufferDelegate(self, queue: self.frontCaptureOutputQueue)
+                if session.canAddOutput(dataOutput) {
+                    session.addOutput(dataOutput)
+                }
+
+                session.commitConfiguration()
+
+                self.frontCameraSession = session
+                self.frontCameraOutput = dataOutput
+
+                if !session.isRunning {
+                    session.startRunning()
+                }
+
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+
+                    let previewLayer = self.frontPreviewView.previewLayer
+                    previewLayer.session = session
+                    previewLayer.videoGravity = .resizeAspectFill
+                    previewLayer.frame = self.frontPreviewView.bounds
+                    previewLayer.needsDisplayOnBoundsChange = true
+
+                    if let label = self.frontPreviewContainer?.subviews.compactMap({ $0 as? UILabel }).first {
+                        self.frontPreviewContainer?.bringSubviewToFront(label)
+                    }
+                    self.frontPreviewContainer?.bringSubviewToFront(self.replayButton)
+
+                    self.frontPreviewView.isHidden = false
+                    self.frontPreviewContainer?.isHidden = false
+
+                    self.updateFrontPreviewOrientation()
+                    self.applyLocalMirrorTransform()
+                    self.updateReplayTargetSizes()
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    debugVideo("Failed to configure front camera preview: \(error.localizedDescription)")
+                    self?.frontPreviewContainer?.isHidden = true
+                }
             }
-
-            let previewLayer = frontPreviewView.previewLayer
-            previewLayer.session = session
-            previewLayer.videoGravity = .resizeAspectFill
-            previewLayer.frame = frontPreviewView.bounds
-            previewLayer.needsDisplayOnBoundsChange = true
-
-            // IMPORTANT: Avoid poking at broader AVCaptureConnection state; Orange iPad (iOS 18.6.2)
-            // was crashing when we queried mirroring support. Orientation is handled separately via
-            // updateFrontPreviewOrientation().
-            if let label = frontPreviewContainer?.subviews.compactMap({ $0 as? UILabel }).first {
-                frontPreviewContainer?.bringSubviewToFront(label)
-            }
-            frontPreviewContainer?.bringSubviewToFront(replayButton)
-
-            frontPreviewView.isHidden = false
-            frontPreviewContainer?.isHidden = false
-
-            let dataOutput = AVCaptureVideoDataOutput()
-            dataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
-            dataOutput.alwaysDiscardsLateVideoFrames = true
-            dataOutput.setSampleBufferDelegate(self, queue: frontCaptureOutputQueue)
-            if session.canAddOutput(dataOutput) {
-                session.addOutput(dataOutput)
-            }
-            frontCameraOutput = dataOutput
-
-            session.commitConfiguration()
-
-            frontCameraSession = session
-
-            startFrontCameraSessionIfNeeded()
-            updateFrontPreviewOrientation()
-            applyLocalMirrorTransform()
-            updateReplayTargetSizes()
-        } catch {
-            debugVideo("Failed to configure front camera preview: \(error.localizedDescription)")
-            frontPreviewContainer?.isHidden = true
         }
     }
 
@@ -734,7 +769,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private func applyRemoteMirrorTransformIfPossible() -> Bool {
         guard let remoteView = remoteVideoView else { return false }
         let scaleX: CGFloat = isRemoteMirrored ? -1 : 1
-        remoteView.transform = CGAffineTransform(scaleX: scaleX, y: 1)
+        let transform = CGAffineTransform(scaleX: scaleX, y: 1)
+        remoteView.transform = transform
+        mpcVideoImageView?.transform = transform  // Also apply to MPC video view
         remoteMirrorApplied = true
         return true
     }
@@ -885,6 +922,16 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     }
 
     private func setupSignaler() {
+        // Handle incoming MPC video frames (H.264 encoded with rotation)
+        signaler.onVideoFrame = { [weak self] h264Data, rotation in
+            self?.handleMPCVideoFrame(h264Data, rotation: rotation)
+        }
+
+        // Setup H.264 decoder callback
+        h264Decoder.onDecodedFrame = { [weak self] pixelBuffer in
+            self?.handleDecodedFrame(pixelBuffer)
+        }
+
         signaler.onMessage = { [weak self] msg in
             guard let self = self else { return }
             switch msg {
@@ -908,7 +955,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
                     let constraints = RTCMediaConstraints(
                         mandatoryConstraints: ["OfferToReceiveVideo": "true"],
-                        optionalConstraints: nil
+                        optionalConstraints: ["CandidateNetworkPolicy": "low_cost"]
                     )
                     self.peerConnection.answer(for: constraints) { sdp, err in
                         guard let sdp = sdp, err == nil else {
@@ -926,6 +973,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
                 }
 
             case .candidate(let candidateSdp, let sdpMid, let sdpMLineIndex):
+                debugCandidate("RECEIVER", direction: "RECEIVED", candidate: candidateSdp)
                 let candidate = RTCIceCandidate(
                     sdp: candidateSdp,
                     sdpMLineIndex: sdpMLineIndex,
@@ -933,9 +981,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
                 )
                 self.peerConnection.add(candidate) { error in
                     if let error = error {
-                        print("Receiver: failed to add candidate: \(error)")
-                    } else {
-                        print("Receiver: added candidate successfully")
+                        debugICE("RECEIVER failed to add candidate: \(error)")
                     }
                 }
 
@@ -982,13 +1028,89 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         case .count: stateName = "count"
         @unknown default: stateName = "unknown(\(newState.rawValue))"
         }
-        print("Receiver: ICE state → \(stateName) (\(newState.rawValue))")
+        debugICE("RECEIVER state → \(stateName)")
 
-        if newState == .failed {
-            print("Receiver: ICE CONNECTION FAILED")
+        if newState == .checking {
+            startICEPairMonitoring()
+        } else if newState == .connected || newState == .completed {
+            stopICEPairMonitoring()
+            debugICE("RECEIVER ✅ ICE connected successfully!")
+            // Disable MPC video since WebRTC is working
+            if usingMPCVideo {
+                disableMPCVideo()
+            }
+        } else if newState == .failed {
+            stopICEPairMonitoring()
+            debugICE("RECEIVER ❌ ICE CONNECTION FAILED - waiting for MPC video")
+            // MPC video will automatically be shown when frames arrive
         } else if newState == .disconnected {
-            print("Receiver: ICE DISCONNECTED - connection may be unstable")
+            debugICE("RECEIVER ⚠️ ICE disconnected")
         }
+    }
+
+    // MARK: - MPC Video Fallback
+
+    private func handleMPCVideoFrame(_ h264Data: Data, rotation: Int) {
+        // First frame - enable MPC video display
+        if !usingMPCVideo {
+            enableMPCVideo()
+        }
+
+        // Store rotation for use when decoded frame arrives
+        currentMPCRotation = rotation
+
+        // Decode H.264 NAL data (async, callback will handle display)
+        h264Decoder.decode(nalData: h264Data)
+
+        mpcFrameCount += 1
+
+        // Log periodically
+        if mpcFrameCount % 30 == 0 {
+            print("Receiver: 📹 MPC received H.264 frame \(mpcFrameCount), size: \(h264Data.count) bytes, rot: \(rotation * 90)°")
+        }
+    }
+
+    private func handleDecodedFrame(_ pixelBuffer: CVPixelBuffer) {
+        // Convert CVPixelBuffer to CIImage
+        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+
+        // Apply rotation based on currentMPCRotation (0=0°, 1=90°, 2=180°, 3=270°)
+        // CIImage rotation is counterclockwise, so we need to adjust
+        switch currentMPCRotation {
+        case 1: // 90° clockwise = 270° counterclockwise
+            ciImage = ciImage.oriented(.right)
+        case 2: // 180°
+            ciImage = ciImage.oriented(.down)
+        case 3: // 270° clockwise = 90° counterclockwise
+            ciImage = ciImage.oriented(.left)
+        default: // 0° - no rotation needed
+            break
+        }
+
+        guard let cgImage = mpcCIContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        let image = UIImage(cgImage: cgImage)
+
+        // Update the image view
+        mpcVideoImageView?.image = image
+
+        // Also add to replay buffer for slow-motion replay
+        if !isReplaying {
+            remoteReplayBuffer.append(image: image, timestamp: CACurrentMediaTime())
+        }
+    }
+
+    private func enableMPCVideo() {
+        usingMPCVideo = true
+        mpcVideoImageView?.isHidden = false
+        remoteVideoView?.isHidden = true
+        print("Receiver: 📹 MPC video fallback ENABLED - displaying via ImageView")
+    }
+
+    private func disableMPCVideo() {
+        usingMPCVideo = false
+        mpcVideoImageView?.isHidden = true
+        remoteVideoView?.isHidden = false
+        print("Receiver: 📹 MPC video fallback DISABLED - WebRTC connected")
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
@@ -996,8 +1118,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        let candidateString = candidate.sdp
-        print("Receiver: generated candidate: \(candidateString.prefix(60))...")
+        debugCandidate("RECEIVER", direction: "GENERATED", candidate: candidate.sdp)
         signaler.send(SignalMessage.candidate(candidate))
     }
 
@@ -1151,17 +1272,111 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         }
     }
 
+    // MARK: - ICE Pair Monitoring
+
+    private var icePairTimer: Timer?
+
+    private func startICEPairMonitoring() {
+        guard DebugFlags.icePairChecks else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.icePairTimer?.invalidate()
+            self?.icePairTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+                self?.logICECandidatePairs()
+            }
+            // Fire immediately once
+            self?.logICECandidatePairs()
+        }
+    }
+
+    private func stopICEPairMonitoring() {
+        icePairTimer?.invalidate()
+        icePairTimer = nil
+    }
+
+    private func logICECandidatePairs() {
+        guard DebugFlags.icePairChecks, peerConnection != nil else { return }
+
+        peerConnection.statistics { [weak self] stats in
+            guard self != nil else { return }
+
+            var pairs: [(state: String, local: String, remote: String, nominated: Bool, bytesSent: UInt64, bytesRecv: UInt64)] = []
+
+            // First pass: collect candidate info - use stat.id as key (not values["id"])
+            var candidateInfo: [String: String] = [:]
+            for (statId, stat) in stats.statistics {
+                if stat.type == "local-candidate" || stat.type == "remote-candidate" {
+                    let ip = stat.values["address"] as? String ?? stat.values["ip"] as? String ?? "?"
+                    let port = stat.values["port"] as? Int ?? 0
+                    let proto = stat.values["protocol"] as? String ?? "?"
+                    let candidateType = stat.values["candidateType"] as? String ?? "?"
+                    candidateInfo[statId] = "\(candidateType) \(ip):\(port) (\(proto))"
+                }
+            }
+
+            // Second pass: collect pairs
+            for stat in stats.statistics.values {
+                if stat.type == "candidate-pair" {
+                    let state = stat.values["state"] as? String ?? "?"
+                    let nominated = stat.values["nominated"] as? Bool ?? false
+                    let localId = stat.values["localCandidateId"] as? String ?? ""
+                    let remoteId = stat.values["remoteCandidateId"] as? String ?? ""
+                    let bytesSent = (stat.values["bytesSent"] as? NSNumber)?.uint64Value ?? 0
+                    let bytesRecv = (stat.values["bytesReceived"] as? NSNumber)?.uint64Value ?? 0
+
+                    let localDesc = candidateInfo[localId] ?? localId
+                    let remoteDesc = candidateInfo[remoteId] ?? remoteId
+
+                    pairs.append((state, localDesc, remoteDesc, nominated, bytesSent, bytesRecv))
+                }
+            }
+
+            // Log summary
+            if pairs.isEmpty {
+                debugICEPairs("RECEIVER ICE: No candidate pairs yet")
+                return
+            }
+
+            let inProgress = pairs.filter { $0.state == "in-progress" }.count
+            let succeeded = pairs.filter { $0.state == "succeeded" }.count
+            let failed = pairs.filter { $0.state == "failed" }.count
+            let waiting = pairs.filter { $0.state == "waiting" }.count
+            let frozen = pairs.filter { $0.state == "frozen" }.count
+
+            debugICEPairs("RECEIVER ICE: \(pairs.count) pairs - succeeded:\(succeeded) in-progress:\(inProgress) waiting:\(waiting) frozen:\(frozen) failed:\(failed)")
+
+            // Log active/interesting pairs
+            for pair in pairs where pair.state == "in-progress" || pair.state == "succeeded" {
+                let marker = pair.nominated ? "★" : " "
+                debugICEPairs("  \(marker) [\(pair.state)] local:\(pair.local) ↔ remote:\(pair.remote) sent:\(pair.bytesSent) recv:\(pair.bytesRecv)")
+            }
+
+            // Log failed pairs to understand why
+            if failed > 0 && succeeded == 0 {
+                debugICEPairs("  ⚠️ Failed pairs:")
+                for pair in pairs.prefix(5) where pair.state == "failed" {
+                    debugICEPairs("    ✗ local:\(pair.local) ↔ remote:\(pair.remote)")
+                }
+            }
+        }
+    }
+
     private func logWebRTCStats() {
         guard peerConnection != nil else { return }
 
         peerConnection.statistics { [weak self] stats in
             guard let self = self else { return }
 
+            let shouldLogICE = DebugFlags.iceDetailed
+            let shouldLogStats = DebugFlags.webrtcStats
+            guard shouldLogICE || shouldLogStats else { return }
+
             let currentTime = Date()
             let timeDiff = currentTime.timeIntervalSince(self.lastStatsTime)
             self.lastStatsTime = currentTime
 
-            print("📊 RECEIVER WEBRTC STATS (Δ\(String(format: "%.1f", timeDiff))s):")
+            if shouldLogStats {
+                print("📊 RECEIVER WEBRTC STATS (Δ\(String(format: "%.1f", timeDiff))s):")
+            }
 
             var bytesReceived: UInt64 = 0
             var packetsReceived: UInt32 = 0
@@ -1176,8 +1391,30 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             var bitrateMbps: Double = 0
 
             for stat in stats.statistics.values {
+                if shouldLogICE, stat.type == "candidate-pair" {
+                    let state = stat.values["state"] as? String ?? "?"
+                    if state == "succeeded" || state == "in-progress" {
+                        let pairId = stat.values["id"].map { String(describing: $0) } ?? "?"
+                        let nominated = stat.values["nominated"].map { String(describing: $0) } ?? "?"
+                        let localType = stat.values["localCandidateType"].map { String(describing: $0) } ?? "?"
+                        let remoteType = stat.values["remoteCandidateType"].map { String(describing: $0) } ?? "?"
+                        print("  Pair \(pairId): state=\(state) nominated=\(nominated) local=\(localType) remote=\(remoteType)")
+
+                        if let localId = stat.values["localCandidateId"] as? String,
+                           let local = stats.statistics[localId]?.values {
+                            print("    ↳ localId=\(localId) data=\(local)")
+                        }
+                        if let remoteId = stat.values["remoteCandidateId"] as? String,
+                           let remote = stats.statistics[remoteId]?.values {
+                            print("    ↳ remoteId=\(remoteId) data=\(remote)")
+                        }
+                        print("    ↳ raw: \(stat.values)")
+                    }
+                }
+
                 // Inbound RTP (what we're receiving)
-                if stat.type == "inbound-rtp" && stat.values["mediaType"] as? String == "video" {
+                if shouldLogStats,
+                   stat.type == "inbound-rtp" && stat.values["mediaType"] as? String == "video" {
                     if let bytes = stat.values["bytesReceived"] as? UInt64 {
                         bytesReceived = bytes
                     }
@@ -1211,7 +1448,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
                 }
 
                 // Candidate pair (connection quality)
-                if stat.type == "candidate-pair" && stat.values["state"] as? String == "succeeded" {
+                if shouldLogStats, stat.type == "candidate-pair" && stat.values["state"] as? String == "succeeded" {
                     if let rtt = stat.values["currentRoundTripTime"] as? Double {
                         print("  📡 RTT: \(String(format: "%.0f", rtt * 1000))ms")
                     }
