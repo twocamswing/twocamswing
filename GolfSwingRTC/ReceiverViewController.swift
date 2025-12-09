@@ -216,6 +216,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
     // Connection status UI
     private var connectionStatusLabel: UILabel?
+    private var connectionStartTime: Date?
+    private var connectionTimer: Timer?
+    private var iceCheckingStarted = false
 
     // Replay infrastructure
     private let remoteReplayBuffer = ReplayBuffer()
@@ -318,6 +321,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         }
         syncLocalMirrorUI(persist: false)
         applyLocalMirrorTransform()
+
+        // Start connection timer immediately
+        startConnectionTimer()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -720,7 +726,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         let hasRemoteReplay = !remoteReplaySequence.frames.isEmpty
         let hasFrontReplay = !frontReplaySequence.frames.isEmpty
 
+        // Hide both WebRTC and MPC video views during replay
         remoteVideoView.isHidden = hasRemoteReplay
+        mpcVideoImageView?.isHidden = hasRemoteReplay
         remoteReplayImageView.isHidden = !hasRemoteReplay
         frontPreviewView.isHidden = hasFrontReplay
         frontReplayImageView.isHidden = !hasFrontReplay
@@ -765,7 +773,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         replayStartTimestamp = nil
         remoteReplayImageView.isHidden = true
         frontReplayImageView.isHidden = true
-        remoteVideoView.isHidden = false
+        // Restore correct video view based on whether we're using MPC or WebRTC
+        if usingMPCVideo {
+            mpcVideoImageView?.isHidden = false
+            remoteVideoView.isHidden = true
+        } else {
+            remoteVideoView.isHidden = false
+            mpcVideoImageView?.isHidden = true
+        }
         frontPreviewView.isHidden = false
         isReplaying = false
         replayButton.isEnabled = true
@@ -1057,9 +1072,11 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         if newState == .checking {
             startICEPairMonitoring()
-            updateConnectionStatus("Connecting...")
+            iceCheckingStarted = true
         } else if newState == .connected || newState == .completed {
             stopICEPairMonitoring()
+            stopConnectionTimer()
+            iceCheckingStarted = false
             debugICE("RECEIVER ✅ ICE connected successfully!")
             updateConnectionStatus("Connected via WebRTC", isConnected: true)
             // Disable MPC video since WebRTC is working
@@ -1068,6 +1085,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             }
         } else if newState == .failed {
             stopICEPairMonitoring()
+            stopConnectionTimer()
+            iceCheckingStarted = false
             debugICE("RECEIVER ❌ ICE CONNECTION FAILED - waiting for MPC video")
             updateConnectionStatus("Waiting for peer-to-peer...")
             // MPC video will automatically be shown when frames arrive
@@ -1132,6 +1151,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         usingMPCVideo = true
         mpcVideoImageView?.isHidden = false
         remoteVideoView?.isHidden = true
+        stopConnectionTimer()
         updateConnectionStatus("Connected via peer-to-peer", isConnected: true)
         print("Receiver: 📹 MPC video fallback ENABLED - displaying via ImageView")
     }
@@ -1153,6 +1173,31 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
                 label.isHidden = false
                 label.alpha = 1
             }
+        }
+    }
+
+    private func startConnectionTimer() {
+        connectionStartTime = Date()
+        connectionTimer?.invalidate()
+        connectionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateConnectionTimerDisplay()
+        }
+        updateConnectionTimerDisplay()
+    }
+
+    private func stopConnectionTimer() {
+        connectionTimer?.invalidate()
+        connectionTimer = nil
+        connectionStartTime = nil
+    }
+
+    private func updateConnectionTimerDisplay() {
+        guard let startTime = connectionStartTime else { return }
+        let elapsed = Int(Date().timeIntervalSince(startTime))
+        if iceCheckingStarted {
+            updateConnectionStatus("Connecting... (\(elapsed)s)")
+        } else {
+            updateConnectionStatus("Waiting for sender... (\(elapsed)s)")
         }
     }
 
