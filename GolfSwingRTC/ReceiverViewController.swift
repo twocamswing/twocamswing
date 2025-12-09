@@ -490,6 +490,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         ])
         connectionStatusLabel = statusLabel
 
+        // Bring flip button to front so it's not covered by MPC video or status label
+        remoteContainer.bringSubviewToFront(remoteFlipButton)
+
         syncRemoteMirrorUI(persist: false)
         applyRemoteMirrorTransformIfPossible()
         updateReplayTargetSizes()
