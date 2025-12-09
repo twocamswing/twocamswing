@@ -214,6 +214,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private let mpcCIContext = CIContext()
     private var currentMPCRotation: Int = 0  // Store current rotation for decoded frames
 
+    // Connection status UI
+    private var connectionStatusLabel: UILabel?
+
     // Replay infrastructure
     private let remoteReplayBuffer = ReplayBuffer()
     private let frontReplayBuffer = ReplayBuffer()
@@ -467,6 +470,25 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             mpcImageView.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor)
         ])
         mpcVideoImageView = mpcImageView
+
+        // Add connection status label centered on remote video
+        let statusLabel = UILabel()
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        statusLabel.textColor = .white
+        statusLabel.textAlignment = .center
+        statusLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        statusLabel.layer.cornerRadius = 8
+        statusLabel.clipsToBounds = true
+        statusLabel.numberOfLines = 2
+        statusLabel.text = "  Waiting for sender...  "
+        remoteContainer.addSubview(statusLabel)
+        NSLayoutConstraint.activate([
+            statusLabel.centerXAnchor.constraint(equalTo: remoteContainer.centerXAnchor),
+            statusLabel.centerYAnchor.constraint(equalTo: remoteContainer.centerYAnchor),
+            statusLabel.widthAnchor.constraint(lessThanOrEqualTo: remoteContainer.widthAnchor, multiplier: 0.9)
+        ])
+        connectionStatusLabel = statusLabel
 
         syncRemoteMirrorUI(persist: false)
         applyRemoteMirrorTransformIfPossible()
@@ -1032,9 +1054,11 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         if newState == .checking {
             startICEPairMonitoring()
+            updateConnectionStatus("Connecting...")
         } else if newState == .connected || newState == .completed {
             stopICEPairMonitoring()
             debugICE("RECEIVER ✅ ICE connected successfully!")
+            updateConnectionStatus("Connected via WebRTC", isConnected: true)
             // Disable MPC video since WebRTC is working
             if usingMPCVideo {
                 disableMPCVideo()
@@ -1042,9 +1066,11 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         } else if newState == .failed {
             stopICEPairMonitoring()
             debugICE("RECEIVER ❌ ICE CONNECTION FAILED - waiting for MPC video")
+            updateConnectionStatus("Waiting for peer-to-peer...")
             // MPC video will automatically be shown when frames arrive
         } else if newState == .disconnected {
             debugICE("RECEIVER ⚠️ ICE disconnected")
+            updateConnectionStatus("Reconnecting...")
         }
     }
 
@@ -1103,7 +1129,28 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         usingMPCVideo = true
         mpcVideoImageView?.isHidden = false
         remoteVideoView?.isHidden = true
+        updateConnectionStatus("Connected via peer-to-peer", isConnected: true)
         print("Receiver: 📹 MPC video fallback ENABLED - displaying via ImageView")
+    }
+
+    private func updateConnectionStatus(_ status: String, isConnected: Bool = false) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let label = self.connectionStatusLabel else { return }
+            label.text = "  \(status)  "
+
+            if isConnected {
+                // Fade out after showing briefly
+                UIView.animate(withDuration: 0.3, delay: 2.0, options: [], animations: {
+                    label.alpha = 0
+                }, completion: { _ in
+                    label.isHidden = true
+                    label.alpha = 1
+                })
+            } else {
+                label.isHidden = false
+                label.alpha = 1
+            }
+        }
     }
 
     private func disableMPCVideo() {

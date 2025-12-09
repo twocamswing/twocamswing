@@ -1,0 +1,26 @@
+*** Begin Patch
+*** Begin Patch
+*** Update File: GolfSwingRTC/SenderViewController.swift
+@@
+-        peerConnection.statistics { [weak self] stats in
+-            guard let self = self else { return }
++        peerConnection.statistics { [weak self] stats in
++            guard let self = self else { return }
+ 
+             let currentTime = Date()
+             let timeDiff = currentTime.timeIntervalSince(self.lastStatsTime)
+             self.lastStatsTime = currentTime
+@@
+-            for stat in stats.statistics.values {
++            for stat in stats.statistics.values {
++                if stat.type == "candidate-pair" {
++                    let state = stat.values["state"] as? String ?? "?"
++                    if state == "succeeded" || state == "in-progress" {
++                        print("  ❄️ Pair \(stat.values["id"] ?? "?"): state=\(state) nominated=\(stat.values["nominated"] ?? "?") local=\(stat.values["localCandidateType"] ?? "?") remote=\(stat.values["remoteCandidateType"] ?? "?")")
++                    }
++                }
+ 
+                 // Outbound RTP (what we're sending)
+*** End Patch
+
+*** End Patch

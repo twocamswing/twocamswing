@@ -29,11 +29,13 @@ log() {
 start_log_stream() {
   local device_name=$1
   local udid=$2
-  local outfile="$LOG_DIR/${device_name}-$(timestamp_for_file).log"
+  local outfile="$LOG_DIR/$(timestamp_for_file)-${device_name}.log"
+  local upper_name
+  upper_name=$(echo "$device_name" | tr '[:lower:]' '[:upper:]')
 
   if ! command -v idevicesyslog >/dev/null 2>&1; then
     log "idevicesyslog not found; skipping log capture for $device_name"
-    eval "${device_name^^}_LOG_FILE=\"\""
+    eval "${upper_name}_LOG_FILE=\"\""
     echo ""
     return
   fi
@@ -45,7 +47,7 @@ start_log_stream() {
       | tee "$outfile" | sed "s/^/[$device_name] /"
   ) &
 
-  eval "${device_name^^}_LOG_FILE=\"$outfile\""
+  eval "${upper_name}_LOG_FILE=\"$outfile\""
   echo $!
 }
 
@@ -73,10 +75,22 @@ ORANGE_LOG_PID=$(start_log_stream "orange" "$ORANGE_UDID")
 trap cleanup_streams INT TERM EXIT
 
 if [[ -n "$RED_LOG_PID" || -n "$ORANGE_LOG_PID" ]]; then
-  log "Capturing device logs for 5 seconds..."
-  sleep 5
-  log "Stopping log capture"
-  cleanup_streams
+  log "Capturing device logs (press Ctrl+C to stop)..."
+  log "Logs writing to: $LOG_DIR/"
+
+  # Show periodic line counts so user knows logs are being captured
+  while kill -0 "$RED_LOG_PID" 2>/dev/null || kill -0 "$ORANGE_LOG_PID" 2>/dev/null; do
+    sleep 10
+    red_lines=$(wc -l < "$RED_LOG_FILE" 2>/dev/null | tr -d ' ' || echo "0")
+    orange_lines=$(wc -l < "$ORANGE_LOG_FILE" 2>/dev/null | tr -d ' ' || echo "0")
+    log "📊 Log lines captured - red: $red_lines, orange: $orange_lines"
+  done &
+  STATS_PID=$!
+
+  trap 'kill $STATS_PID 2>/dev/null; cleanup_streams' INT TERM EXIT
+
+  # Wait indefinitely - user presses Ctrl+C when done
+  wait $RED_LOG_PID $ORANGE_LOG_PID 2>/dev/null
 else
   log "No log capture processes started."
 fi

@@ -23,12 +23,14 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
     private let mpcTargetFPS: Double = 30  // Target 30 FPS for smooth video
     private var lastMPCFrameTime: TimeInterval = 0
     private var iceCheckingStartTime: Date?
-    private let iceTimeoutSeconds: TimeInterval = 15  // Enable MPC fallback after 15s of ICE checking
+    private let iceTimeoutSeconds: TimeInterval = 8  // Enable MPC fallback after 8s of ICE checking
     private let h264Encoder = HardwareH264Encoder()
     private var encoderConfigured = false
 
     // MARK: - UI
     private var preview: RTCMTLVideoView!
+    private var statusLabel: UILabel?
+    private var statusUpdateTimer: Timer?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -92,8 +94,69 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         preview.backgroundColor = .blue // Debug color to verify view is there
         view.addSubview(preview)
 
+        // Add connection status label
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 16, weight: .semibold)
+        label.textColor = .white
+        label.textAlignment = .center
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        label.layer.cornerRadius = 8
+        label.clipsToBounds = true
+        label.numberOfLines = 2
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.9),
+            label.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
+        ])
+        statusLabel = label
+        updateConnectionStatus("Searching for receiver...")
+
         print("Sender: setupPreview - preview frame: \(preview.frame)")
         print("Sender: setupPreview - preview ready; video track will attach after capture starts")
+    }
+
+    private func updateConnectionStatus(_ status: String, isConnected: Bool = false) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let label = self.statusLabel else { return }
+            label.text = "  \(status)  "
+            label.isHidden = isConnected
+
+            // If connected, hide after a brief moment
+            if isConnected {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    label.isHidden = true
+                }
+            }
+        }
+    }
+
+    private func startStatusUpdateTimer() {
+        statusUpdateTimer?.invalidate()
+        statusUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateStatusFromState()
+        }
+    }
+
+    private func stopStatusUpdateTimer() {
+        statusUpdateTimer?.invalidate()
+        statusUpdateTimer = nil
+    }
+
+    private func updateStatusFromState() {
+        guard let startTime = iceCheckingStartTime else { return }
+        let elapsed = Int(Date().timeIntervalSince(startTime))
+        let remaining = max(0, Int(iceTimeoutSeconds) - elapsed)
+
+        if useMPCVideo {
+            updateConnectionStatus("Streaming via peer-to-peer", isConnected: true)
+        } else if signaler.isConnected {
+            updateConnectionStatus("Connecting... (\(remaining)s)")
+        } else {
+            updateConnectionStatus("Searching for receiver...")
+        }
     }
 
     private func setupSignaling() {
@@ -685,10 +748,14 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
             // Start timeout timer for MPC fallback
             iceCheckingStartTime = Date()
             scheduleICETimeoutCheck()
+            startStatusUpdateTimer()
+            updateConnectionStatus("Connecting...")
         } else if newState == .connected || newState == .completed {
             stopICEPairMonitoring()
+            stopStatusUpdateTimer()
             iceCheckingStartTime = nil
             debugICE("SENDER ✅ ICE connected successfully!")
+            updateConnectionStatus("Connected via WebRTC", isConnected: true)
             // Disable MPC video fallback since WebRTC is working
             if useMPCVideo {
                 useMPCVideo = false
@@ -696,12 +763,14 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
             }
         } else if newState == .failed {
             stopICEPairMonitoring()
+            stopStatusUpdateTimer()
             iceCheckingStartTime = nil
             debugICE("SENDER ❌ ICE CONNECTION FAILED - enabling MPC video fallback")
             // Enable MPC video streaming as fallback
             enableMPCVideoFallback()
         } else if newState == .disconnected {
             debugICE("SENDER ⚠️ ICE disconnected")
+            updateConnectionStatus("Reconnecting...")
         }
     }
 
@@ -729,6 +798,8 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         guard !useMPCVideo else { return }
         useMPCVideo = true
         mpcFrameCount = 0
+        stopStatusUpdateTimer()
+        updateConnectionStatus("Streaming via peer-to-peer", isConnected: true)
         print("Sender: 📹 MPC video fallback ENABLED - streaming via MultipeerConnectivity")
     }
 
