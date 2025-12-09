@@ -300,6 +300,12 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var sensitivityContainer: UIStackView?
     private let triggerModeKey = "receiver.replayTriggerMode"  // 0 = manual, 1 = sound
     private let sensitivityKey = "receiver.soundSensitivity"
+
+    // Settings
+    private var settingsButton: UIButton?
+    private var settingsOverlay: SettingsOverlayView?
+    private var replayRepeatCount: Int = 1
+    private var currentReplayIteration: Int = 0
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var frontReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var remoteResizeMode: FrameImageConverter.ResizeMode = .aspectFill
@@ -324,8 +330,10 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         localFlipButton.addTarget(self, action: #selector(handleLocalFlipTapped), for: .touchUpInside)
         triggerModeControl?.addTarget(self, action: #selector(handleTriggerModeChanged), for: .valueChanged)
         sensitivitySlider?.addTarget(self, action: #selector(handleSensitivityChanged), for: .valueChanged)
+        settingsButton?.addTarget(self, action: #selector(handleSettingsTapped), for: .touchUpInside)
         setupAudioDetector()
         restoreTriggerModeSettings()
+        loadReplaySettings()
         isRemoteMirrored = UserDefaults.standard.bool(forKey: remoteMirrorKey)
         remoteMirrorApplied = false
         syncRemoteMirrorUI(persist: false)
@@ -379,7 +387,6 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         let frontContainer = UIView()
         frontContainer.backgroundColor = UIColor.black.withAlphaComponent(0.85)
-        frontContainer.layer.cornerRadius = 12
         frontContainer.layer.masksToBounds = true
 
         frontPreviewView.translatesAutoresizingMaskIntoConstraints = false
@@ -559,8 +566,26 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         ])
         connectionStatusLabel = statusLabel
 
-        // Bring flip button to front so it's not covered by MPC video or status label
+        // Settings button (cog) - bottom right of remote container
+        let settingsBtn = UIButton(type: .system)
+        let cogConfig = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        settingsBtn.setImage(UIImage(systemName: "gearshape.fill", withConfiguration: cogConfig), for: .normal)
+        settingsBtn.tintColor = .white
+        settingsBtn.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        settingsBtn.layer.cornerRadius = 18
+        settingsBtn.translatesAutoresizingMaskIntoConstraints = false
+        remoteContainer.addSubview(settingsBtn)
+        NSLayoutConstraint.activate([
+            settingsBtn.widthAnchor.constraint(equalToConstant: 36),
+            settingsBtn.heightAnchor.constraint(equalToConstant: 36),
+            settingsBtn.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor, constant: -12),
+            settingsBtn.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor, constant: -12)
+        ])
+        settingsButton = settingsBtn
+
+        // Bring buttons to front so they're not covered by MPC video or status label
         remoteContainer.bringSubviewToFront(remoteFlipButton)
+        remoteContainer.bringSubviewToFront(settingsBtn)
 
         syncRemoteMirrorUI(persist: false)
         applyRemoteMirrorTransformIfPossible()
@@ -785,6 +810,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         isReplaying = true
         replayButton.isEnabled = false
+        currentReplayIteration = 1  // Starting first iteration
 
         let hasRemoteReplay = !remoteReplaySequence.frames.isEmpty
         let hasFrontReplay = !frontReplaySequence.frames.isEmpty
@@ -814,8 +840,30 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         let frontFinished = advance(sequence: &frontReplaySequence, elapsed: elapsed, imageView: frontReplayImageView)
 
         if remoteFinished && frontFinished {
-            stopReplay()
+            // Check if we need more iterations
+            if currentReplayIteration < replayRepeatCount {
+                currentReplayIteration += 1
+                restartReplayIteration()
+            } else {
+                stopReplay()
+            }
         }
+    }
+
+    private func restartReplayIteration() {
+        // Reset sequences to beginning
+        remoteReplaySequence.currentIndex = 0
+        frontReplaySequence.currentIndex = 0
+        // Reset timestamp to start timing from now
+        replayStartTimestamp = CACurrentMediaTime()
+        // Show first frames
+        if let firstRemote = remoteReplaySequence.frames.first {
+            remoteReplayImageView.image = firstRemote.image
+        }
+        if let firstFront = frontReplaySequence.frames.first {
+            frontReplayImageView.image = firstFront.image
+        }
+        debugVideo("Replay iteration \(currentReplayIteration) of \(replayRepeatCount)")
     }
 
     private func advance(sequence: inout ReplaySequence, elapsed: TimeInterval, imageView: UIImageView) -> Bool {
@@ -986,6 +1034,19 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             text = "High"
         }
         sensitivityLabel?.text = text
+    }
+
+    // MARK: - Settings
+
+    private func loadReplaySettings() {
+        replayRepeatCount = SettingsOverlayView.replayRepeatCount
+    }
+
+    @objc private func handleSettingsTapped() {
+        let overlay = SettingsOverlayView()
+        overlay.delegate = self
+        overlay.show(in: view)
+        settingsOverlay = overlay
     }
 
     private func syncLocalMirrorUI(persist: Bool) {
@@ -1267,6 +1328,13 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         // First frame - enable MPC video display
         if !usingMPCVideo {
             enableMPCVideo()
+        } else {
+            // Already using MPC video - but ensure status is correct (fixes reconnection bug)
+            // Only update if status label is visible (meaning it might show stale message)
+            if connectionStatusLabel?.isHidden == false {
+                stopConnectionTimer()
+                updateConnectionStatus("Connected via peer-to-peer", isConnected: true)
+            }
         }
 
         // Store rotation for use when decoded frame arrives
@@ -1789,5 +1857,17 @@ private extension CGImagePropertyOrientation {
         case .landscapeLeft: return mirrored ? .downMirrored : .down
         @unknown default: return mirrored ? .upMirrored : .up
         }
+    }
+}
+
+// MARK: - SettingsOverlayDelegate
+
+extension ReceiverViewController: SettingsOverlayDelegate {
+    func settingsDidChange() {
+        loadReplaySettings()
+    }
+
+    func settingsDidClose() {
+        settingsOverlay = nil
     }
 }
