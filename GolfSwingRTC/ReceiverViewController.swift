@@ -379,7 +379,6 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         let frontContainer = UIView()
         frontContainer.backgroundColor = UIColor.black.withAlphaComponent(0.85)
-        frontContainer.layer.cornerRadius = 12
         frontContainer.layer.masksToBounds = true
 
         frontPreviewView.translatesAutoresizingMaskIntoConstraints = false
@@ -1267,6 +1266,13 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         // First frame - enable MPC video display
         if !usingMPCVideo {
             enableMPCVideo()
+        } else {
+            // Already using MPC video - but ensure status is correct (fixes reconnection bug)
+            // Only update if status label is visible (meaning it might show stale message)
+            if connectionStatusLabel?.isHidden == false {
+                stopConnectionTimer()
+                updateConnectionStatus("Connected via peer-to-peer", isConnected: true)
+            }
         }
 
         // Store rotation for use when decoded frame arrives
