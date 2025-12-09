@@ -291,6 +291,15 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var remoteMirrorApplied = false
     private var isLocalMirrored = true
     private let localMirrorKey = "receiver.localMirror"
+
+    // Sound-triggered replay
+    private let audioDetector = AudioImpactDetector()
+    private var triggerModeControl: UISegmentedControl?
+    private var sensitivitySlider: UISlider?
+    private var sensitivityLabel: UILabel?
+    private var sensitivityContainer: UIStackView?
+    private let triggerModeKey = "receiver.replayTriggerMode"  // 0 = manual, 1 = sound
+    private let sensitivityKey = "receiver.soundSensitivity"
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var frontReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
     private var remoteResizeMode: FrameImageConverter.ResizeMode = .aspectFill
@@ -313,6 +322,10 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         replayButton.addTarget(self, action: #selector(handleReplayButtonTapped), for: .touchUpInside)
         remoteFlipButton.addTarget(self, action: #selector(handleRemoteFlipTapped), for: .touchUpInside)
         localFlipButton.addTarget(self, action: #selector(handleLocalFlipTapped), for: .touchUpInside)
+        triggerModeControl?.addTarget(self, action: #selector(handleTriggerModeChanged), for: .valueChanged)
+        sensitivitySlider?.addTarget(self, action: #selector(handleSensitivityChanged), for: .valueChanged)
+        setupAudioDetector()
+        restoreTriggerModeSettings()
         isRemoteMirrored = UserDefaults.standard.bool(forKey: remoteMirrorKey)
         remoteMirrorApplied = false
         syncRemoteMirrorUI(persist: false)
@@ -346,6 +359,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         super.viewWillDisappear(animated)
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
         stopFrontCameraSession()
+        audioDetector.stop()
     }
 
     override func viewDidLayoutSubviews() {
@@ -397,10 +411,59 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             frontLabel.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12)
         ])
 
+        // Sound trigger mode segmented control
+        let modeControl = UISegmentedControl(items: ["Manual", "Sound"])
+        modeControl.selectedSegmentIndex = 0
+        modeControl.translatesAutoresizingMaskIntoConstraints = false
+        modeControl.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        modeControl.selectedSegmentTintColor = UIColor.systemBlue.withAlphaComponent(0.8)
+        modeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .normal)
+        modeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
+        frontContainer.addSubview(modeControl)
+        triggerModeControl = modeControl
+
+        // Sensitivity controls container (hidden by default)
+        let sensContainer = UIStackView()
+        sensContainer.axis = .horizontal
+        sensContainer.spacing = 8
+        sensContainer.alignment = .center
+        sensContainer.translatesAutoresizingMaskIntoConstraints = false
+        sensContainer.isHidden = true
+
+        let sensLabel = UILabel()
+        sensLabel.text = "Med"
+        sensLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        sensLabel.textColor = .white
+        sensLabel.textAlignment = .center
+        sensLabel.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        sensitivityLabel = sensLabel
+
+        let slider = UISlider()
+        slider.minimumValue = 0.0
+        slider.maximumValue = 1.0
+        slider.value = 0.5
+        slider.tintColor = .systemBlue
+        slider.translatesAutoresizingMaskIntoConstraints = false
+
+        sensContainer.addArrangedSubview(slider)
+        sensContainer.addArrangedSubview(sensLabel)
+        frontContainer.addSubview(sensContainer)
+        sensitivitySlider = slider
+        sensitivityContainer = sensContainer
+
         frontContainer.addSubview(replayButton)
+
         NSLayoutConstraint.activate([
+            modeControl.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12),
+            modeControl.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor, constant: -12),
+
+            sensContainer.leadingAnchor.constraint(equalTo: modeControl.trailingAnchor, constant: 8),
+            sensContainer.centerYAnchor.constraint(equalTo: modeControl.centerYAnchor),
+            sensContainer.trailingAnchor.constraint(lessThanOrEqualTo: frontContainer.trailingAnchor, constant: -12),
+            slider.widthAnchor.constraint(equalToConstant: 80),
+
             replayButton.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12),
-            replayButton.bottomAnchor.constraint(equalTo: frontContainer.bottomAnchor, constant: -12)
+            replayButton.bottomAnchor.constraint(equalTo: modeControl.topAnchor, constant: -8)
         ])
 
         frontContainer.addSubview(localFlipButton)
@@ -821,6 +884,108 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         syncLocalMirrorUI(persist: true)
         applyLocalMirrorTransform()
         frontReplayBuffer.clear()
+    }
+
+    // MARK: - Sound Trigger Mode
+
+    private func setupAudioDetector() {
+        audioDetector.onImpactDetected = { [weak self] in
+            guard let self = self else { return }
+            // Only trigger if in sound mode and not already replaying
+            guard self.triggerModeControl?.selectedSegmentIndex == 1, !self.isReplaying else { return }
+            print("AudioImpactDetector: Triggering replay from sound detection")
+            self.handleReplayButtonTapped()
+        }
+    }
+
+    private func restoreTriggerModeSettings() {
+        // Restore saved trigger mode
+        let savedMode = UserDefaults.standard.integer(forKey: triggerModeKey)
+        triggerModeControl?.selectedSegmentIndex = savedMode
+
+        // Restore saved sensitivity
+        let savedSensitivity = UserDefaults.standard.object(forKey: sensitivityKey) as? Float ?? 0.5
+        sensitivitySlider?.value = savedSensitivity
+        audioDetector.sensitivity = savedSensitivity
+        updateSensitivityLabel(savedSensitivity)
+
+        // Update UI and start detector if needed
+        updateTriggerModeUI(mode: savedMode)
+        if savedMode == 1 {
+            requestMicrophoneAndStartDetection()
+        }
+    }
+
+    @objc private func handleTriggerModeChanged() {
+        guard let control = triggerModeControl else { return }
+        let mode = control.selectedSegmentIndex
+        UserDefaults.standard.set(mode, forKey: triggerModeKey)
+        updateTriggerModeUI(mode: mode)
+
+        if mode == 1 {
+            // Sound mode - request mic permission and start detection
+            requestMicrophoneAndStartDetection()
+        } else {
+            // Manual mode - stop detection
+            audioDetector.stop()
+        }
+    }
+
+    private func updateTriggerModeUI(mode: Int) {
+        let isSoundMode = mode == 1
+        sensitivityContainer?.isHidden = !isSoundMode
+
+        // In sound mode, hide the manual replay button since it's automatic
+        // Actually, let's keep it visible so user can still manually trigger if needed
+        // replayButton.isHidden = isSoundMode
+    }
+
+    private func requestMicrophoneAndStartDetection() {
+        let permission = AVAudioSession.sharedInstance().recordPermission
+        switch permission {
+        case .granted:
+            audioDetector.start()
+        case .undetermined:
+            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.audioDetector.start()
+                    } else {
+                        // Fall back to manual mode
+                        self?.triggerModeControl?.selectedSegmentIndex = 0
+                        self?.updateTriggerModeUI(mode: 0)
+                        UserDefaults.standard.set(0, forKey: self?.triggerModeKey ?? "")
+                    }
+                }
+            }
+        case .denied:
+            // Already denied - fall back to manual mode
+            triggerModeControl?.selectedSegmentIndex = 0
+            updateTriggerModeUI(mode: 0)
+            UserDefaults.standard.set(0, forKey: triggerModeKey)
+        @unknown default:
+            break
+        }
+    }
+
+    @objc private func handleSensitivityChanged() {
+        guard let slider = sensitivitySlider else { return }
+        let value = slider.value
+        audioDetector.sensitivity = value
+        UserDefaults.standard.set(value, forKey: sensitivityKey)
+        updateSensitivityLabel(value)
+    }
+
+    private func updateSensitivityLabel(_ value: Float) {
+        let text: String
+        if value < 0.33 {
+            text = "Low"
+        } else if value < 0.67 {
+            text = "Med"
+        } else {
+            text = "High"
+        }
+        sensitivityLabel?.text = text
     }
 
     private func syncLocalMirrorUI(persist: Bool) {
