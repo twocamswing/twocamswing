@@ -512,20 +512,24 @@ final class DualVideoPlayerViewController: UIViewController {
     }
 
     private func drawSavedLines() {
-        // Draw remote line if exists
+        // Draw remote line if exists - scale from normalized to view size
         if let line = remoteLine {
+            let viewSize = remotePlayerView.bounds.size
             let path = UIBezierPath()
-            path.move(to: line.start)
-            path.addLine(to: line.end)
+            path.move(to: line.start(in: viewSize))
+            path.addLine(to: line.end(in: viewSize))
             remoteDrawingLayer.path = path.cgPath
+            remoteDrawingLayer.frame = remotePlayerView.bounds
         }
 
-        // Draw front line if exists
+        // Draw front line if exists - scale from normalized to view size
         if let line = frontLine {
+            let viewSize = frontPlayerView.bounds.size
             let path = UIBezierPath()
-            path.move(to: line.start)
-            path.addLine(to: line.end)
+            path.move(to: line.start(in: viewSize))
+            path.addLine(to: line.end(in: viewSize))
             frontDrawingLayer.path = path.cgPath
+            frontDrawingLayer.frame = frontPlayerView.bounds
         }
     }
 }

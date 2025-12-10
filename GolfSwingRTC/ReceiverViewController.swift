@@ -926,11 +926,15 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
         // Auto-save the swing with line data
         if !remoteFrames.isEmpty {
-            // Convert line data
-            let remoteLineData: LineData? = (remoteLineStart != nil && remoteLineEnd != nil)
-                ? LineData(start: remoteLineStart!, end: remoteLineEnd!) : nil
-            let frontLineData: LineData? = (frontLineStart != nil && frontLineEnd != nil)
-                ? LineData(start: frontLineStart!, end: frontLineEnd!) : nil
+            // Convert line data with normalized coordinates
+            var remoteLineData: LineData? = nil
+            if let start = remoteLineStart, let end = remoteLineEnd, let container = remoteVideoContainer {
+                remoteLineData = LineData(start: start, end: end, viewSize: container.bounds.size)
+            }
+            var frontLineData: LineData? = nil
+            if let start = frontLineStart, let end = frontLineEnd, let container = frontPreviewView.superview {
+                frontLineData = LineData(start: start, end: end, viewSize: container.bounds.size)
+            }
 
             SwingStorage.shared.saveSwing(
                 remoteFrames: remoteFrames,

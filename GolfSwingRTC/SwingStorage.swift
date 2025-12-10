@@ -2,20 +2,29 @@ import UIKit
 import AVFoundation
 
 struct LineData: Codable {
+    /// Normalized coordinates (0.0-1.0 range relative to view size)
     let startX: CGFloat
     let startY: CGFloat
     let endX: CGFloat
     let endY: CGFloat
 
-    init(start: CGPoint, end: CGPoint) {
-        self.startX = start.x
-        self.startY = start.y
-        self.endX = end.x
-        self.endY = end.y
+    /// Create from absolute coordinates - normalizes to 0.0-1.0 range
+    init(start: CGPoint, end: CGPoint, viewSize: CGSize) {
+        self.startX = start.x / viewSize.width
+        self.startY = start.y / viewSize.height
+        self.endX = end.x / viewSize.width
+        self.endY = end.y / viewSize.height
     }
 
-    var start: CGPoint { CGPoint(x: startX, y: startY) }
-    var end: CGPoint { CGPoint(x: endX, y: endY) }
+    /// Get absolute start point scaled to given view size
+    func start(in size: CGSize) -> CGPoint {
+        CGPoint(x: startX * size.width, y: startY * size.height)
+    }
+
+    /// Get absolute end point scaled to given view size
+    func end(in size: CGSize) -> CGPoint {
+        CGPoint(x: endX * size.width, y: endY * size.height)
+    }
 }
 
 struct SavedSwing: Codable {
