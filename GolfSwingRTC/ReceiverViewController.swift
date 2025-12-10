@@ -259,12 +259,11 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     }()
     private let replayButton: UIButton = {
         let button = UIButton(type: .system)
-        button.setTitle("Slow Replay", for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
-        button.backgroundColor = UIColor.black.withAlphaComponent(0.65)
-        button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 12
-        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
+        button.setImage(UIImage(systemName: "hand.tap.fill", withConfiguration: config), for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.85)
+        button.layer.cornerRadius = 28
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -420,14 +419,14 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             frontLabel.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12)
         ])
 
-        // Sound trigger mode segmented control
-        let modeControl = UISegmentedControl(items: ["Manual", "Sound"])
+        // Sound trigger mode segmented control with icons
+        let handIcon = UIImage(systemName: "hand.tap.fill")
+        let micIcon = UIImage(systemName: "mic.fill")
+        let modeControl = UISegmentedControl(items: [handIcon as Any, micIcon as Any])
         modeControl.selectedSegmentIndex = 0
         modeControl.translatesAutoresizingMaskIntoConstraints = false
         modeControl.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         modeControl.selectedSegmentTintColor = UIColor.systemBlue.withAlphaComponent(0.8)
-        modeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .normal)
-        modeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
         frontContainer.addSubview(modeControl)
         triggerModeControl = modeControl
 
@@ -471,6 +470,8 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             sensContainer.trailingAnchor.constraint(lessThanOrEqualTo: frontContainer.trailingAnchor, constant: -12),
             slider.widthAnchor.constraint(equalToConstant: 80),
 
+            replayButton.widthAnchor.constraint(equalToConstant: 56),
+            replayButton.heightAnchor.constraint(equalToConstant: 56),
             replayButton.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12),
             replayButton.bottomAnchor.constraint(equalTo: modeControl.topAnchor, constant: -8)
         ])
@@ -1003,8 +1004,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         sensitivityContainer?.isHidden = !isSoundMode
 
         // In sound mode, hide the manual replay button since it's automatic
-        // Actually, let's keep it visible so user can still manually trigger if needed
-        // replayButton.isHidden = isSoundMode
+        replayButton.isHidden = isSoundMode
     }
 
     private func requestMicrophoneAndStartDetection() {
