@@ -31,7 +31,7 @@ final class RootViewController: UIViewController {
         
         // Title label
         let label = UILabel()
-        label.text = "Golf Swing RTC"
+        label.text = "Two Cam Swing"
         label.font = UIFont.systemFont(ofSize: 24, weight: .bold)
         label.textAlignment = .center
 

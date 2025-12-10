@@ -164,8 +164,13 @@ final class SwingLibraryViewController: UIViewController {
         let frontURL = SwingStorage.shared.getVideoURL(for: swing, front: true)
 
         if let frontURL = frontURL {
-            // Show dual player
-            let dualVC = DualVideoPlayerViewController(remoteURL: remoteURL, frontURL: frontURL)
+            // Show dual player with line data
+            let dualVC = DualVideoPlayerViewController(
+                remoteURL: remoteURL,
+                frontURL: frontURL,
+                remoteLine: swing.remoteLine,
+                frontLine: swing.frontLine
+            )
             dualVC.modalPresentationStyle = .fullScreen
             present(dualVC, animated: true)
         } else {
@@ -324,12 +329,17 @@ final class DualVideoPlayerViewController: UIViewController {
 
     private let remoteURL: URL
     private let frontURL: URL
+    private let remoteLine: LineData?
+    private let frontLine: LineData?
 
     private var remotePlayer: AVPlayer?
     private var frontPlayer: AVPlayer?
 
     private let remotePlayerView = PlayerView()
     private let frontPlayerView = PlayerView()
+
+    private let remoteDrawingLayer = CAShapeLayer()
+    private let frontDrawingLayer = CAShapeLayer()
 
     private let closeButton: UIButton = {
         let button = UIButton(type: .system)
@@ -349,9 +359,24 @@ final class DualVideoPlayerViewController: UIViewController {
         return button
     }()
 
-    init(remoteURL: URL, frontURL: URL) {
+    private let speedControl: UISegmentedControl = {
+        let control = UISegmentedControl(items: ["0.15x", "0.25x", "0.5x", "1x"])
+        control.selectedSegmentIndex = 1  // Default 0.25x
+        control.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        control.selectedSegmentTintColor = UIColor.systemBlue.withAlphaComponent(0.8)
+        control.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .normal)
+        control.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        return control
+    }()
+
+    private var currentSpeed: Float = 0.25
+
+    init(remoteURL: URL, frontURL: URL, remoteLine: LineData? = nil, frontLine: LineData? = nil) {
         self.remoteURL = remoteURL
         self.frontURL = frontURL
+        self.remoteLine = remoteLine
+        self.frontLine = frontLine
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -364,6 +389,7 @@ final class DualVideoPlayerViewController: UIViewController {
         view.backgroundColor = .black
         setupUI()
         setupPlayers()
+        setupDrawingLayers()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -382,6 +408,7 @@ final class DualVideoPlayerViewController: UIViewController {
         view.addSubview(stack)
         view.addSubview(closeButton)
         view.addSubview(playPauseButton)
+        view.addSubview(speedControl)
 
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 50),
@@ -392,12 +419,17 @@ final class DualVideoPlayerViewController: UIViewController {
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            playPauseButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            playPauseButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+            playPauseButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            playPauseButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            speedControl.centerYAnchor.constraint(equalTo: playPauseButton.centerYAnchor),
+            speedControl.leadingAnchor.constraint(equalTo: playPauseButton.trailingAnchor, constant: 20),
+            speedControl.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20)
         ])
 
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         playPauseButton.addTarget(self, action: #selector(playPauseTapped), for: .touchUpInside)
+        speedControl.addTarget(self, action: #selector(speedChanged), for: .valueChanged)
     }
 
     private func setupPlayers() {
@@ -424,8 +456,8 @@ final class DualVideoPlayerViewController: UIViewController {
         guard let remote = remotePlayer, let front = frontPlayer else { return }
 
         if remote.rate == 0 {
-            remote.play()
-            front.play()
+            remote.rate = currentSpeed
+            front.rate = currentSpeed
             let config = UIImage.SymbolConfiguration(pointSize: 40, weight: .medium)
             playPauseButton.setImage(UIImage(systemName: "pause.circle.fill", withConfiguration: config), for: .normal)
         } else {
@@ -436,11 +468,69 @@ final class DualVideoPlayerViewController: UIViewController {
         }
     }
 
+    @objc private func speedChanged() {
+        switch speedControl.selectedSegmentIndex {
+        case 0: currentSpeed = 0.15
+        case 1: currentSpeed = 0.25
+        case 2: currentSpeed = 0.5
+        default: currentSpeed = 1.0
+        }
+
+        // Apply immediately if playing
+        if remotePlayer?.rate != 0 {
+            remotePlayer?.rate = currentSpeed
+            frontPlayer?.rate = currentSpeed
+        }
+    }
+
     @objc private func playerDidFinish() {
         remotePlayer?.seek(to: .zero)
         frontPlayer?.seek(to: .zero)
-        remotePlayer?.play()
-        frontPlayer?.play()
+        remotePlayer?.rate = currentSpeed
+        frontPlayer?.rate = currentSpeed
+    }
+
+    private func setupDrawingLayers() {
+        // Setup remote line
+        remoteDrawingLayer.strokeColor = UIColor.systemYellow.cgColor
+        remoteDrawingLayer.lineWidth = 3.0
+        remoteDrawingLayer.lineCap = .round
+        remoteDrawingLayer.fillColor = nil
+        remotePlayerView.layer.addSublayer(remoteDrawingLayer)
+
+        // Setup front line
+        frontDrawingLayer.strokeColor = UIColor.systemYellow.cgColor
+        frontDrawingLayer.lineWidth = 3.0
+        frontDrawingLayer.lineCap = .round
+        frontDrawingLayer.fillColor = nil
+        frontPlayerView.layer.addSublayer(frontDrawingLayer)
+
+        // Draw lines after layout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.drawSavedLines()
+        }
+    }
+
+    private func drawSavedLines() {
+        // Draw remote line if exists - scale from normalized to view size
+        if let line = remoteLine {
+            let viewSize = remotePlayerView.bounds.size
+            let path = UIBezierPath()
+            path.move(to: line.start(in: viewSize))
+            path.addLine(to: line.end(in: viewSize))
+            remoteDrawingLayer.path = path.cgPath
+            remoteDrawingLayer.frame = remotePlayerView.bounds
+        }
+
+        // Draw front line if exists - scale from normalized to view size
+        if let line = frontLine {
+            let viewSize = frontPlayerView.bounds.size
+            let path = UIBezierPath()
+            path.move(to: line.start(in: viewSize))
+            path.addLine(to: line.end(in: viewSize))
+            frontDrawingLayer.path = path.cgPath
+            frontDrawingLayer.frame = frontPlayerView.bounds
+        }
     }
 }
 
