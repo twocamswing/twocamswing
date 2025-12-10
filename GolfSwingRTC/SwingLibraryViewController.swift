@@ -164,8 +164,13 @@ final class SwingLibraryViewController: UIViewController {
         let frontURL = SwingStorage.shared.getVideoURL(for: swing, front: true)
 
         if let frontURL = frontURL {
-            // Show dual player
-            let dualVC = DualVideoPlayerViewController(remoteURL: remoteURL, frontURL: frontURL)
+            // Show dual player with line data
+            let dualVC = DualVideoPlayerViewController(
+                remoteURL: remoteURL,
+                frontURL: frontURL,
+                remoteLine: swing.remoteLine,
+                frontLine: swing.frontLine
+            )
             dualVC.modalPresentationStyle = .fullScreen
             present(dualVC, animated: true)
         } else {
@@ -324,12 +329,17 @@ final class DualVideoPlayerViewController: UIViewController {
 
     private let remoteURL: URL
     private let frontURL: URL
+    private let remoteLine: LineData?
+    private let frontLine: LineData?
 
     private var remotePlayer: AVPlayer?
     private var frontPlayer: AVPlayer?
 
     private let remotePlayerView = PlayerView()
     private let frontPlayerView = PlayerView()
+
+    private let remoteDrawingLayer = CAShapeLayer()
+    private let frontDrawingLayer = CAShapeLayer()
 
     private let closeButton: UIButton = {
         let button = UIButton(type: .system)
@@ -362,9 +372,11 @@ final class DualVideoPlayerViewController: UIViewController {
 
     private var currentSpeed: Float = 0.25
 
-    init(remoteURL: URL, frontURL: URL) {
+    init(remoteURL: URL, frontURL: URL, remoteLine: LineData? = nil, frontLine: LineData? = nil) {
         self.remoteURL = remoteURL
         self.frontURL = frontURL
+        self.remoteLine = remoteLine
+        self.frontLine = frontLine
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -377,6 +389,7 @@ final class DualVideoPlayerViewController: UIViewController {
         view.backgroundColor = .black
         setupUI()
         setupPlayers()
+        setupDrawingLayers()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -475,6 +488,45 @@ final class DualVideoPlayerViewController: UIViewController {
         frontPlayer?.seek(to: .zero)
         remotePlayer?.rate = currentSpeed
         frontPlayer?.rate = currentSpeed
+    }
+
+    private func setupDrawingLayers() {
+        // Setup remote line
+        remoteDrawingLayer.strokeColor = UIColor.systemYellow.cgColor
+        remoteDrawingLayer.lineWidth = 3.0
+        remoteDrawingLayer.lineCap = .round
+        remoteDrawingLayer.fillColor = nil
+        remotePlayerView.layer.addSublayer(remoteDrawingLayer)
+
+        // Setup front line
+        frontDrawingLayer.strokeColor = UIColor.systemYellow.cgColor
+        frontDrawingLayer.lineWidth = 3.0
+        frontDrawingLayer.lineCap = .round
+        frontDrawingLayer.fillColor = nil
+        frontPlayerView.layer.addSublayer(frontDrawingLayer)
+
+        // Draw lines after layout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.drawSavedLines()
+        }
+    }
+
+    private func drawSavedLines() {
+        // Draw remote line if exists
+        if let line = remoteLine {
+            let path = UIBezierPath()
+            path.move(to: line.start)
+            path.addLine(to: line.end)
+            remoteDrawingLayer.path = path.cgPath
+        }
+
+        // Draw front line if exists
+        if let line = frontLine {
+            let path = UIBezierPath()
+            path.move(to: line.start)
+            path.addLine(to: line.end)
+            frontDrawingLayer.path = path.cgPath
+        }
     }
 }
 

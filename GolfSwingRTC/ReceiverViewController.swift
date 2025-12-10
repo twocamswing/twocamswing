@@ -306,12 +306,20 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var settingsOverlay: SettingsOverlayView?
     private var savedToast: UILabel?
 
-    // Line drawing
-    private let drawingLayer = CAShapeLayer()
-    private var lineStart: CGPoint?
-    private var lineEnd: CGPoint?
-    private var clearLineButton: UIButton?
-    private var isDrawingEnabled = true
+    // Line drawing - remote (right) video
+    private let remoteDrawingLayer = CAShapeLayer()
+    private var remoteLineStart: CGPoint?
+    private var remoteLineEnd: CGPoint?
+    private var remoteClearButton: UIButton?
+
+    // Line drawing - front (left) video
+    private let frontDrawingLayer = CAShapeLayer()
+    private var frontLineStart: CGPoint?
+    private var frontLineEnd: CGPoint?
+    private var frontClearButton: UIButton?
+
+    // Track which view is being drawn on
+    private var activeDrawingView: UIView?
     private var replayRepeatCount: Int = 1
     private var currentReplayIteration: Int = 0
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
@@ -916,9 +924,20 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         remoteReplaySequence.reset()
         frontReplaySequence.reset()
 
-        // Auto-save the swing
+        // Auto-save the swing with line data
         if !remoteFrames.isEmpty {
-            SwingStorage.shared.saveSwing(remoteFrames: remoteFrames, frontFrames: frontFrames) { [weak self] result in
+            // Convert line data
+            let remoteLineData: LineData? = (remoteLineStart != nil && remoteLineEnd != nil)
+                ? LineData(start: remoteLineStart!, end: remoteLineEnd!) : nil
+            let frontLineData: LineData? = (frontLineStart != nil && frontLineEnd != nil)
+                ? LineData(start: frontLineStart!, end: frontLineEnd!) : nil
+
+            SwingStorage.shared.saveSwing(
+                remoteFrames: remoteFrames,
+                frontFrames: frontFrames,
+                remoteLine: remoteLineData,
+                frontLine: frontLineData
+            ) { [weak self] result in
                 switch result {
                 case .success:
                     self?.showSavedToast()
@@ -1075,15 +1094,48 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     // MARK: - Line Drawing
 
     private func setupDrawingLayer() {
-        guard let container = remoteVideoContainer else { return }
+        // Setup remote (right) video drawing
+        if let remoteContainer = remoteVideoContainer {
+            remoteDrawingLayer.strokeColor = UIColor.systemYellow.cgColor
+            remoteDrawingLayer.lineWidth = 3.0
+            remoteDrawingLayer.lineCap = .round
+            remoteDrawingLayer.fillColor = nil
+            remoteContainer.layer.addSublayer(remoteDrawingLayer)
 
-        drawingLayer.strokeColor = UIColor.systemYellow.cgColor
-        drawingLayer.lineWidth = 3.0
-        drawingLayer.lineCap = .round
-        drawingLayer.fillColor = nil
-        container.layer.addSublayer(drawingLayer)
+            let clearBtn = makeClearButton()
+            remoteContainer.addSubview(clearBtn)
+            NSLayoutConstraint.activate([
+                clearBtn.widthAnchor.constraint(equalToConstant: 32),
+                clearBtn.heightAnchor.constraint(equalToConstant: 32),
+                clearBtn.topAnchor.constraint(equalTo: remoteContainer.topAnchor, constant: 12),
+                clearBtn.leadingAnchor.constraint(equalTo: remoteContainer.leadingAnchor, constant: 12)
+            ])
+            clearBtn.addTarget(self, action: #selector(clearRemoteLineTapped), for: .touchUpInside)
+            remoteClearButton = clearBtn
+        }
 
-        // Clear line button
+        // Setup front (left) video drawing
+        if let frontContainer = frontPreviewView.superview {
+            frontDrawingLayer.strokeColor = UIColor.systemYellow.cgColor
+            frontDrawingLayer.lineWidth = 3.0
+            frontDrawingLayer.lineCap = .round
+            frontDrawingLayer.fillColor = nil
+            frontContainer.layer.addSublayer(frontDrawingLayer)
+
+            let clearBtn = makeClearButton()
+            frontContainer.addSubview(clearBtn)
+            NSLayoutConstraint.activate([
+                clearBtn.widthAnchor.constraint(equalToConstant: 32),
+                clearBtn.heightAnchor.constraint(equalToConstant: 32),
+                clearBtn.topAnchor.constraint(equalTo: frontContainer.topAnchor, constant: 12),
+                clearBtn.leadingAnchor.constraint(equalTo: frontContainer.leadingAnchor, constant: 12)
+            ])
+            clearBtn.addTarget(self, action: #selector(clearFrontLineTapped), for: .touchUpInside)
+            frontClearButton = clearBtn
+        }
+    }
+
+    private func makeClearButton() -> UIButton {
         let clearBtn = UIButton(type: .system)
         let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .medium)
         clearBtn.setImage(UIImage(systemName: "xmark.circle.fill", withConfiguration: config), for: .normal)
@@ -1092,79 +1144,110 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         clearBtn.layer.cornerRadius = 16
         clearBtn.translatesAutoresizingMaskIntoConstraints = false
         clearBtn.isHidden = true
-        container.addSubview(clearBtn)
-
-        NSLayoutConstraint.activate([
-            clearBtn.widthAnchor.constraint(equalToConstant: 32),
-            clearBtn.heightAnchor.constraint(equalToConstant: 32),
-            clearBtn.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            clearBtn.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12)
-        ])
-
-        clearBtn.addTarget(self, action: #selector(clearLineTapped), for: .touchUpInside)
-        clearLineButton = clearBtn
+        return clearBtn
     }
 
-    @objc private func clearLineTapped() {
-        clearDrawnLine()
+    @objc private func clearRemoteLineTapped() {
+        remoteLineStart = nil
+        remoteLineEnd = nil
+        remoteDrawingLayer.path = nil
+        remoteClearButton?.isHidden = true
     }
 
-    private func clearDrawnLine() {
-        lineStart = nil
-        lineEnd = nil
-        drawingLayer.path = nil
-        clearLineButton?.isHidden = true
+    @objc private func clearFrontLineTapped() {
+        frontLineStart = nil
+        frontLineEnd = nil
+        frontDrawingLayer.path = nil
+        frontClearButton?.isHidden = true
     }
 
-    private func updateDrawnLine() {
-        guard let start = lineStart, let end = lineEnd else {
-            drawingLayer.path = nil
+    private func updateRemoteLine() {
+        guard let start = remoteLineStart, let end = remoteLineEnd else {
+            remoteDrawingLayer.path = nil
             return
         }
-
         let path = UIBezierPath()
         path.move(to: start)
         path.addLine(to: end)
-        drawingLayer.path = path.cgPath
-        clearLineButton?.isHidden = false
+        remoteDrawingLayer.path = path.cgPath
+        remoteClearButton?.isHidden = false
+    }
+
+    private func updateFrontLine() {
+        guard let start = frontLineStart, let end = frontLineEnd else {
+            frontDrawingLayer.path = nil
+            return
+        }
+        let path = UIBezierPath()
+        path.move(to: start)
+        path.addLine(to: end)
+        frontDrawingLayer.path = path.cgPath
+        frontClearButton?.isHidden = false
+    }
+
+    /// Returns current line data for saving with swing
+    func getLineData() -> (remote: (start: CGPoint, end: CGPoint)?, front: (start: CGPoint, end: CGPoint)?) {
+        let remoteLine: (CGPoint, CGPoint)? = (remoteLineStart != nil && remoteLineEnd != nil)
+            ? (remoteLineStart!, remoteLineEnd!) : nil
+        let frontLine: (CGPoint, CGPoint)? = (frontLineStart != nil && frontLineEnd != nil)
+            ? (frontLineStart!, frontLineEnd!) : nil
+        return (remoteLine, frontLine)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
+        guard let touch = touches.first else { return }
 
-        guard isDrawingEnabled,
-              let touch = touches.first,
-              let container = remoteVideoContainer else { return }
+        // Check remote container - only if no line exists yet
+        if let remoteContainer = remoteVideoContainer {
+            let loc = touch.location(in: remoteContainer)
+            if remoteContainer.bounds.contains(loc) && remoteLineStart == nil {
+                remoteLineStart = loc
+                remoteLineEnd = loc
+                activeDrawingView = remoteContainer
+                updateRemoteLine()
+                return
+            }
+        }
 
-        let location = touch.location(in: container)
-        // Only start drawing if touch is within the remote video area
-        if container.bounds.contains(location) {
-            lineStart = location
-            lineEnd = location
-            updateDrawnLine()
+        // Check front container - only if no line exists yet
+        if let frontContainer = frontPreviewView.superview {
+            let loc = touch.location(in: frontContainer)
+            if frontContainer.bounds.contains(loc) && frontLineStart == nil {
+                frontLineStart = loc
+                frontLineEnd = loc
+                activeDrawingView = frontContainer
+                updateFrontLine()
+                return
+            }
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
+        guard let touch = touches.first, let activeView = activeDrawingView else { return }
 
-        guard lineStart != nil,
-              let touch = touches.first,
-              let container = remoteVideoContainer else { return }
-
-        lineEnd = touch.location(in: container)
-        updateDrawnLine()
+        if activeView == remoteVideoContainer {
+            remoteLineEnd = touch.location(in: activeView)
+            updateRemoteLine()
+        } else if activeView == frontPreviewView.superview {
+            frontLineEnd = touch.location(in: activeView)
+            updateFrontLine()
+        }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
+        guard let touch = touches.first, let activeView = activeDrawingView else { return }
 
-        guard lineStart != nil,
-              let touch = touches.first,
-              let container = remoteVideoContainer else { return }
-
-        lineEnd = touch.location(in: container)
-        updateDrawnLine()
+        if activeView == remoteVideoContainer {
+            remoteLineEnd = touch.location(in: activeView)
+            updateRemoteLine()
+        } else if activeView == frontPreviewView.superview {
+            frontLineEnd = touch.location(in: activeView)
+            updateFrontLine()
+        }
+        activeDrawingView = nil
     }
 
     @objc private func handleMenuTapped() {

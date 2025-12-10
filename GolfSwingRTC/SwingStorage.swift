@@ -1,6 +1,23 @@
 import UIKit
 import AVFoundation
 
+struct LineData: Codable {
+    let startX: CGFloat
+    let startY: CGFloat
+    let endX: CGFloat
+    let endY: CGFloat
+
+    init(start: CGPoint, end: CGPoint) {
+        self.startX = start.x
+        self.startY = start.y
+        self.endX = end.x
+        self.endY = end.y
+    }
+
+    var start: CGPoint { CGPoint(x: startX, y: startY) }
+    var end: CGPoint { CGPoint(x: endX, y: endY) }
+}
+
 struct SavedSwing: Codable {
     let id: UUID
     let date: Date
@@ -9,6 +26,8 @@ struct SavedSwing: Codable {
     let thumbnailFilename: String
     let frameCount: Int
     let duration: TimeInterval
+    let remoteLine: LineData?
+    let frontLine: LineData?
 }
 
 final class SwingStorage {
@@ -44,6 +63,8 @@ final class SwingStorage {
     func saveSwing(
         remoteFrames: [UIImage],
         frontFrames: [UIImage]?,
+        remoteLine: LineData? = nil,
+        frontLine: LineData? = nil,
         completion: @escaping (Result<SavedSwing, Error>) -> Void
     ) {
         guard !remoteFrames.isEmpty else {
@@ -90,7 +111,9 @@ final class SwingStorage {
                     frontVideoFilename: frontFilename,
                     thumbnailFilename: thumbnailFilename,
                     frameCount: remoteFrames.count,
-                    duration: duration
+                    duration: duration,
+                    remoteLine: remoteLine,
+                    frontLine: frontLine
                 )
 
                 // Add to manifest
