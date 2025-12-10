@@ -301,9 +301,11 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private let triggerModeKey = "receiver.replayTriggerMode"  // 0 = manual, 1 = sound
     private let sensitivityKey = "receiver.soundSensitivity"
 
-    // Settings
-    private var settingsButton: UIButton?
+    // Menu and Settings
+    private var menuButton: UIButton?
+    private var menuOverlay: MenuOverlayView?
     private var settingsOverlay: SettingsOverlayView?
+    private var savedToast: UILabel?
     private var replayRepeatCount: Int = 1
     private var currentReplayIteration: Int = 0
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
@@ -330,7 +332,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         localFlipButton.addTarget(self, action: #selector(handleLocalFlipTapped), for: .touchUpInside)
         triggerModeControl?.addTarget(self, action: #selector(handleTriggerModeChanged), for: .valueChanged)
         sensitivitySlider?.addTarget(self, action: #selector(handleSensitivityChanged), for: .valueChanged)
-        settingsButton?.addTarget(self, action: #selector(handleSettingsTapped), for: .touchUpInside)
+        menuButton?.addTarget(self, action: #selector(handleMenuTapped), for: .touchUpInside)
         setupAudioDetector()
         restoreTriggerModeSettings()
         loadReplaySettings()
@@ -566,26 +568,26 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         ])
         connectionStatusLabel = statusLabel
 
-        // Settings button (cog) - bottom right of remote container
-        let settingsBtn = UIButton(type: .system)
-        let cogConfig = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
-        settingsBtn.setImage(UIImage(systemName: "gearshape.fill", withConfiguration: cogConfig), for: .normal)
-        settingsBtn.tintColor = .white
-        settingsBtn.backgroundColor = UIColor.black.withAlphaComponent(0.6)
-        settingsBtn.layer.cornerRadius = 18
-        settingsBtn.translatesAutoresizingMaskIntoConstraints = false
-        remoteContainer.addSubview(settingsBtn)
+        // Menu button (burger) - bottom right of remote container
+        let menuBtn = UIButton(type: .system)
+        let menuConfig = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        menuBtn.setImage(UIImage(systemName: "line.3.horizontal", withConfiguration: menuConfig), for: .normal)
+        menuBtn.tintColor = .white
+        menuBtn.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        menuBtn.layer.cornerRadius = 18
+        menuBtn.translatesAutoresizingMaskIntoConstraints = false
+        remoteContainer.addSubview(menuBtn)
         NSLayoutConstraint.activate([
-            settingsBtn.widthAnchor.constraint(equalToConstant: 36),
-            settingsBtn.heightAnchor.constraint(equalToConstant: 36),
-            settingsBtn.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor, constant: -12),
-            settingsBtn.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor, constant: -12)
+            menuBtn.widthAnchor.constraint(equalToConstant: 36),
+            menuBtn.heightAnchor.constraint(equalToConstant: 36),
+            menuBtn.trailingAnchor.constraint(equalTo: remoteContainer.trailingAnchor, constant: -12),
+            menuBtn.bottomAnchor.constraint(equalTo: remoteContainer.bottomAnchor, constant: -12)
         ])
-        settingsButton = settingsBtn
+        menuButton = menuBtn
 
         // Bring buttons to front so they're not covered by MPC video or status label
         remoteContainer.bringSubviewToFront(remoteFlipButton)
-        remoteContainer.bringSubviewToFront(settingsBtn)
+        remoteContainer.bringSubviewToFront(menuBtn)
 
         syncRemoteMirrorUI(persist: false)
         applyRemoteMirrorTransformIfPossible()
@@ -895,8 +897,25 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         frontPreviewView.isHidden = false
         isReplaying = false
         replayButton.isEnabled = true
+
+        // Extract frames BEFORE resetting sequences
+        let remoteFrames = remoteReplaySequence.frames.map { $0.image }
+        let frontFrames = frontReplaySequence.frames.isEmpty ? nil : frontReplaySequence.frames.map { $0.image }
+
         remoteReplaySequence.reset()
         frontReplaySequence.reset()
+
+        // Auto-save the swing
+        if !remoteFrames.isEmpty {
+            SwingStorage.shared.saveSwing(remoteFrames: remoteFrames, frontFrames: frontFrames) { [weak self] result in
+                switch result {
+                case .success:
+                    self?.showSavedToast()
+                case .failure(let error):
+                    print("Failed to save swing: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     @objc private func handleRemoteFlipTapped() {
@@ -1042,11 +1061,56 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         replayRepeatCount = SettingsOverlayView.replayRepeatCount
     }
 
-    @objc private func handleSettingsTapped() {
+    @objc private func handleMenuTapped() {
+        let overlay = MenuOverlayView()
+        overlay.delegate = self
+        overlay.show(in: view)
+        menuOverlay = overlay
+    }
+
+    private func showSettingsOverlay() {
         let overlay = SettingsOverlayView()
         overlay.delegate = self
         overlay.show(in: view)
         settingsOverlay = overlay
+    }
+
+    private func showSwingLibrary() {
+        let libraryVC = SwingLibraryViewController()
+        libraryVC.modalPresentationStyle = .fullScreen
+        present(libraryVC, animated: true)
+    }
+
+    private func showSavedToast() {
+        guard savedToast == nil else { return }
+
+        let toast = UILabel()
+        toast.text = "  Saved  "
+        toast.font = .systemFont(ofSize: 14, weight: .semibold)
+        toast.textColor = .white
+        toast.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.9)
+        toast.layer.cornerRadius = 12
+        toast.clipsToBounds = true
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        toast.alpha = 0
+
+        view.addSubview(toast)
+        NSLayoutConstraint.activate([
+            toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toast.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20)
+        ])
+        savedToast = toast
+
+        UIView.animate(withDuration: 0.2) {
+            toast.alpha = 1
+        } completion: { _ in
+            UIView.animate(withDuration: 0.3, delay: 1.5, options: []) {
+                toast.alpha = 0
+            } completion: { _ in
+                toast.removeFromSuperview()
+                self.savedToast = nil
+            }
+        }
     }
 
     private func syncLocalMirrorUI(persist: Bool) {
@@ -1869,5 +1933,21 @@ extension ReceiverViewController: SettingsOverlayDelegate {
 
     func settingsDidClose() {
         settingsOverlay = nil
+    }
+}
+
+// MARK: - MenuOverlayDelegate
+
+extension ReceiverViewController: MenuOverlayDelegate {
+    func menuDidSelectSettings() {
+        showSettingsOverlay()
+    }
+
+    func menuDidSelectVideoLibrary() {
+        showSwingLibrary()
+    }
+
+    func menuDidClose() {
+        menuOverlay = nil
     }
 }
