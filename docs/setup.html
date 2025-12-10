@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup Guide - TwoCamSwing</title>
+    <link rel="icon" type="image/png" href="icon.png">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        header {
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        header p {
+            opacity: 0.9;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        h2 {
+            color: #2E7D32;
+            margin: 40px 0 20px 0;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #4CAF50;
+        }
+        h3 {
+            color: #444;
+            margin: 25px 0 15px 0;
+        }
+        .step {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .step-number {
+            display: inline-block;
+            background: #4CAF50;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 32px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .step h3 {
+            display: inline;
+            margin: 0;
+        }
+        .step p {
+            margin-top: 15px;
+            color: #555;
+        }
+        .diagram {
+            background: #fff;
+            border: 2px solid #ddd;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            text-align: center;
+        }
+        .diagram pre {
+            font-family: monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            color: #333;
+        }
+        .tip {
+            background: #E8F5E9;
+            border-left: 4px solid #4CAF50;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .tip strong {
+            color: #2E7D32;
+        }
+        .warning {
+            background: #FFF3E0;
+            border-left: 4px solid #FF9800;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .warning strong {
+            color: #E65100;
+        }
+        .equipment-list {
+            list-style: none;
+        }
+        .equipment-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .equipment-list li:last-child {
+            border-bottom: none;
+        }
+        .required {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .optional {
+            color: #757575;
+        }
+        footer {
+            background: #333;
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        footer a {
+            color: #81C784;
+            text-decoration: none;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
+        .nav-links {
+            margin-top: 15px;
+        }
+        .nav-links a {
+            margin: 0 15px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Setup Guide</h1>
+        <p>Get your dual-camera swing analysis up and running</p>
+    </header>
+
+    <div class="container">
+
+        <h2>What You'll Need</h2>
+
+        <div class="step">
+            <ul class="equipment-list">
+                <li><span class="required">Required:</span> Two iOS devices (iPhone or iPad)</li>
+                <li><span class="required">Required:</span> WiFi network (both devices on same network)</li>
+                <li><span class="required">Required:</span> Two tripods or phone mounts</li>
+                <li><span class="optional">Recommended:</span> Wide-angle clip-on lens for face-on camera (see below)</li>
+            </ul>
+        </div>
+
+        <h2>Camera Positions</h2>
+
+        <div class="diagram">
+            <pre>
+                    Face-On Camera
+                    (Front View)
+                         📱
+                          |
+                          |  6-8 feet
+                          |
+    ←─────────────────────●─────────────────────→
+                       GOLFER
+                          |
+                          |  8-10 feet
+                          |
+                         📱
+                    Down-the-Line
+                    (Side View)
+            </pre>
+        </div>
+
+        <h3>Face-On Camera (Front View)</h3>
+        <div class="step">
+            <p>Position directly in front of the golfer, aligned with the ball. This view shows:</p>
+            <ul style="margin-top: 10px; margin-left: 20px;">
+                <li>Weight shift and balance</li>
+                <li>Hip and shoulder rotation</li>
+                <li>Head movement</li>
+                <li>Club face at impact</li>
+            </ul>
+        </div>
+
+        <div class="warning">
+            <strong>Wide-Angle Lens Recommended:</strong> At 6-8 feet distance, the standard iPhone camera may not capture the full swing. A clip-on wide-angle lens (0.6x or wider) solves this. Available for under $20 on Amazon - search for "iPhone wide angle clip lens".
+        </div>
+
+        <h3>Down-the-Line Camera (Side View)</h3>
+        <div class="step">
+            <p>Position behind the golfer, looking down the target line. This view shows:</p>
+            <ul style="margin-top: 10px; margin-left: 20px;">
+                <li>Swing plane</li>
+                <li>Club path</li>
+                <li>Posture and spine angle</li>
+                <li>Extension through impact</li>
+            </ul>
+        </div>
+
+        <h2>App Setup</h2>
+
+        <div class="step">
+            <span class="step-number">1</span>
+            <h3>Install on Both Devices</h3>
+            <p>Download TwoCamSwing from the App Store on both iOS devices.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span>
+            <h3>Connect to Same WiFi</h3>
+            <p>Ensure both devices are connected to the same WiFi network. The app uses local peer-to-peer networking - no internet required, but same network is essential.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">3</span>
+            <h3>Start the Sender (Camera Device)</h3>
+            <p>On the device that will be the <strong>down-the-line camera</strong>, tap "Start as Sender". This device streams video to the receiver.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">4</span>
+            <h3>Start the Receiver (Viewing Device)</h3>
+            <p>On the device where you'll <strong>view both angles</strong> (typically the face-on position), tap "Start as Receiver". This device shows both camera feeds side-by-side.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">5</span>
+            <h3>Grant Permissions</h3>
+            <p>Allow camera, microphone, and local network access when prompted. The microphone is used for sound-triggered capture.</p>
+        </div>
+
+        <div class="tip">
+            <strong>Pro Tip:</strong> Position the receiver (iPad works great) where the golfer or coach can easily see the replay after each swing.
+        </div>
+
+        <h2>Using the App</h2>
+
+        <div class="step">
+            <span class="step-number">1</span>
+            <h3>Automatic Capture</h3>
+            <p>Just swing! The app listens for the impact sound and automatically triggers a slow-motion replay. No buttons to press.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span>
+            <h3>Manual Replay</h3>
+            <p>Tap the replay button anytime to see the last few seconds in slow motion.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">3</span>
+            <h3>Draw Lines</h3>
+            <p>Draw reference lines on either video by touching and dragging. Use the clear button to remove lines.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">4</span>
+            <h3>Review in Library</h3>
+            <p>All swings are automatically saved. Access the video library from the menu to review past swings at any speed.</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">5</span>
+            <h3>Adjust Settings</h3>
+            <p>Access settings from the menu to adjust slow-motion speed (0.15x, 0.25x, 0.5x) and replay repeat count.</p>
+        </div>
+
+        <h2>Troubleshooting</h2>
+
+        <div class="step">
+            <h3>Devices won't connect?</h3>
+            <p>• Verify both devices are on the same WiFi network<br>
+               • Try restarting both apps<br>
+               • Check that Local Network permission is granted in Settings</p>
+        </div>
+
+        <div class="step">
+            <h3>Sound trigger not working?</h3>
+            <p>• Ensure microphone permission is granted<br>
+               • The trigger works best with a clear impact sound<br>
+               • Indoor environments with less ambient noise work better</p>
+        </div>
+
+        <div class="step">
+            <h3>Video is choppy?</h3>
+            <p>• Move devices closer to the WiFi router<br>
+               • Reduce interference from other devices<br>
+               • 5GHz WiFi networks typically perform better than 2.4GHz</p>
+        </div>
+
+    </div>
+
+    <footer>
+        <a href="index.html">TwoCamSwing</a>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="setup.html">Setup Guide</a>
+            <a href="privacy.html">Privacy Policy</a>
+            <a href="mailto:support@twocamswing.com">Contact</a>
+        </div>
+    </footer>
+</body>
+</html>
