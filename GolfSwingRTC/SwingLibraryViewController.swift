@@ -349,6 +349,19 @@ final class DualVideoPlayerViewController: UIViewController {
         return button
     }()
 
+    private let speedControl: UISegmentedControl = {
+        let control = UISegmentedControl(items: ["0.15x", "0.25x", "0.5x", "1x"])
+        control.selectedSegmentIndex = 1  // Default 0.25x
+        control.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        control.selectedSegmentTintColor = UIColor.systemBlue.withAlphaComponent(0.8)
+        control.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .normal)
+        control.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        return control
+    }()
+
+    private var currentSpeed: Float = 0.25
+
     init(remoteURL: URL, frontURL: URL) {
         self.remoteURL = remoteURL
         self.frontURL = frontURL
@@ -382,6 +395,7 @@ final class DualVideoPlayerViewController: UIViewController {
         view.addSubview(stack)
         view.addSubview(closeButton)
         view.addSubview(playPauseButton)
+        view.addSubview(speedControl)
 
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 50),
@@ -392,12 +406,17 @@ final class DualVideoPlayerViewController: UIViewController {
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            playPauseButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            playPauseButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+            playPauseButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            playPauseButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            speedControl.centerYAnchor.constraint(equalTo: playPauseButton.centerYAnchor),
+            speedControl.leadingAnchor.constraint(equalTo: playPauseButton.trailingAnchor, constant: 20),
+            speedControl.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20)
         ])
 
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         playPauseButton.addTarget(self, action: #selector(playPauseTapped), for: .touchUpInside)
+        speedControl.addTarget(self, action: #selector(speedChanged), for: .valueChanged)
     }
 
     private func setupPlayers() {
@@ -424,8 +443,8 @@ final class DualVideoPlayerViewController: UIViewController {
         guard let remote = remotePlayer, let front = frontPlayer else { return }
 
         if remote.rate == 0 {
-            remote.play()
-            front.play()
+            remote.rate = currentSpeed
+            front.rate = currentSpeed
             let config = UIImage.SymbolConfiguration(pointSize: 40, weight: .medium)
             playPauseButton.setImage(UIImage(systemName: "pause.circle.fill", withConfiguration: config), for: .normal)
         } else {
@@ -436,11 +455,26 @@ final class DualVideoPlayerViewController: UIViewController {
         }
     }
 
+    @objc private func speedChanged() {
+        switch speedControl.selectedSegmentIndex {
+        case 0: currentSpeed = 0.15
+        case 1: currentSpeed = 0.25
+        case 2: currentSpeed = 0.5
+        default: currentSpeed = 1.0
+        }
+
+        // Apply immediately if playing
+        if remotePlayer?.rate != 0 {
+            remotePlayer?.rate = currentSpeed
+            frontPlayer?.rate = currentSpeed
+        }
+    }
+
     @objc private func playerDidFinish() {
         remotePlayer?.seek(to: .zero)
         frontPlayer?.seek(to: .zero)
-        remotePlayer?.play()
-        frontPlayer?.play()
+        remotePlayer?.rate = currentSpeed
+        frontPlayer?.rate = currentSpeed
     }
 }
 

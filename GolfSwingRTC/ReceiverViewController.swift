@@ -305,6 +305,13 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var menuOverlay: MenuOverlayView?
     private var settingsOverlay: SettingsOverlayView?
     private var savedToast: UILabel?
+
+    // Line drawing
+    private let drawingLayer = CAShapeLayer()
+    private var lineStart: CGPoint?
+    private var lineEnd: CGPoint?
+    private var clearLineButton: UIButton?
+    private var isDrawingEnabled = true
     private var replayRepeatCount: Int = 1
     private var currentReplayIteration: Int = 0
     private var remoteReplayTargetSize: CGSize = CGSize(width: 320, height: 320)
@@ -589,6 +596,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         // Bring buttons to front so they're not covered by MPC video or status label
         remoteContainer.bringSubviewToFront(remoteFlipButton)
         remoteContainer.bringSubviewToFront(menuBtn)
+
+        // Drawing layer setup
+        setupDrawingLayer()
 
         syncRemoteMirrorUI(persist: false)
         applyRemoteMirrorTransformIfPossible()
@@ -1060,6 +1070,101 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private func loadReplaySettings() {
         replayRepeatCount = SettingsOverlayView.replayRepeatCount
         slowMotionFactor = SettingsOverlayView.slowMotionFactor
+    }
+
+    // MARK: - Line Drawing
+
+    private func setupDrawingLayer() {
+        guard let container = remoteVideoContainer else { return }
+
+        drawingLayer.strokeColor = UIColor.systemYellow.cgColor
+        drawingLayer.lineWidth = 3.0
+        drawingLayer.lineCap = .round
+        drawingLayer.fillColor = nil
+        container.layer.addSublayer(drawingLayer)
+
+        // Clear line button
+        let clearBtn = UIButton(type: .system)
+        let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+        clearBtn.setImage(UIImage(systemName: "xmark.circle.fill", withConfiguration: config), for: .normal)
+        clearBtn.tintColor = .systemYellow
+        clearBtn.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        clearBtn.layer.cornerRadius = 16
+        clearBtn.translatesAutoresizingMaskIntoConstraints = false
+        clearBtn.isHidden = true
+        container.addSubview(clearBtn)
+
+        NSLayoutConstraint.activate([
+            clearBtn.widthAnchor.constraint(equalToConstant: 32),
+            clearBtn.heightAnchor.constraint(equalToConstant: 32),
+            clearBtn.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            clearBtn.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12)
+        ])
+
+        clearBtn.addTarget(self, action: #selector(clearLineTapped), for: .touchUpInside)
+        clearLineButton = clearBtn
+    }
+
+    @objc private func clearLineTapped() {
+        clearDrawnLine()
+    }
+
+    private func clearDrawnLine() {
+        lineStart = nil
+        lineEnd = nil
+        drawingLayer.path = nil
+        clearLineButton?.isHidden = true
+    }
+
+    private func updateDrawnLine() {
+        guard let start = lineStart, let end = lineEnd else {
+            drawingLayer.path = nil
+            return
+        }
+
+        let path = UIBezierPath()
+        path.move(to: start)
+        path.addLine(to: end)
+        drawingLayer.path = path.cgPath
+        clearLineButton?.isHidden = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+
+        guard isDrawingEnabled,
+              let touch = touches.first,
+              let container = remoteVideoContainer else { return }
+
+        let location = touch.location(in: container)
+        // Only start drawing if touch is within the remote video area
+        if container.bounds.contains(location) {
+            lineStart = location
+            lineEnd = location
+            updateDrawnLine()
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+
+        guard lineStart != nil,
+              let touch = touches.first,
+              let container = remoteVideoContainer else { return }
+
+        lineEnd = touch.location(in: container)
+        updateDrawnLine()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+
+        guard lineStart != nil,
+              let touch = touches.first,
+              let container = remoteVideoContainer else { return }
+
+        lineEnd = touch.location(in: container)
+        updateDrawnLine()
     }
 
     @objc private func handleMenuTapped() {
