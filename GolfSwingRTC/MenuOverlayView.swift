@@ -84,9 +84,7 @@ final class MenuOverlayView: UIView {
             buttonStack.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -12),
             buttonStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
             buttonStack.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
-            settingsButton.widthAnchor.constraint(equalToConstant: 44),
             settingsButton.heightAnchor.constraint(equalToConstant: 44),
-            libraryButton.widthAnchor.constraint(equalToConstant: 44),
             libraryButton.heightAnchor.constraint(equalToConstant: 44)
         ])
 

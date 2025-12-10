@@ -829,6 +829,9 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
             return
         }
 
+        // Save immediately on capture - don't wait for slow-mo replay to finish
+        saveSwingAsync()
+
         isReplaying = true
         replayButton.isEnabled = false
         currentReplayIteration = 1  // Starting first iteration
@@ -917,36 +920,47 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         isReplaying = false
         replayButton.isEnabled = true
 
-        // Extract frames BEFORE resetting sequences
-        let remoteFrames = remoteReplaySequence.frames.map { $0.image }
-        let frontFrames = frontReplaySequence.frames.isEmpty ? nil : frontReplaySequence.frames.map { $0.image }
+        // Note: Saving now happens at start of replay in saveSwingAsync()
+        // Sequences are kept for replay iterations, reset not needed until next capture
+    }
 
-        remoteReplaySequence.reset()
-        frontReplaySequence.reset()
+    /// Save swing asynchronously - called immediately when capture triggers
+    private func saveSwingAsync() {
+        // Capture references to frame arrays (these are value types, cheap to copy reference)
+        let remoteFrameEntries = remoteReplaySequence.frames
+        let frontFrameEntries = frontReplaySequence.frames
 
-        // Auto-save the swing with line data
-        if !remoteFrames.isEmpty {
-            // Convert line data with normalized coordinates
-            var remoteLineData: LineData? = nil
-            if let start = remoteLineStart, let end = remoteLineEnd, let container = remoteVideoContainer {
-                remoteLineData = LineData(start: start, end: end, viewSize: container.bounds.size)
-            }
-            var frontLineData: LineData? = nil
-            if let start = frontLineStart, let end = frontLineEnd, let container = frontPreviewView.superview {
-                frontLineData = LineData(start: start, end: end, viewSize: container.bounds.size)
-            }
+        guard !remoteFrameEntries.isEmpty else { return }
 
+        // Capture line data on main thread (needs UI container sizes)
+        var remoteLineData: LineData? = nil
+        if let start = remoteLineStart, let end = remoteLineEnd, let container = remoteVideoContainer {
+            remoteLineData = LineData(start: start, end: end, viewSize: container.bounds.size)
+        }
+        var frontLineData: LineData? = nil
+        if let start = frontLineStart, let end = frontLineEnd, let container = frontPreviewView.superview {
+            frontLineData = LineData(start: start, end: end, viewSize: container.bounds.size)
+        }
+
+        // Move frame extraction to background to avoid blocking replay
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let remoteFrames = remoteFrameEntries.map { $0.image }
+            let frontFrames = frontFrameEntries.isEmpty ? nil : frontFrameEntries.map { $0.image }
+
+            // Save in background - doesn't block replay
             SwingStorage.shared.saveSwing(
                 remoteFrames: remoteFrames,
                 frontFrames: frontFrames,
                 remoteLine: remoteLineData,
                 frontLine: frontLineData
-            ) { [weak self] result in
-                switch result {
-                case .success:
-                    self?.showSavedToast()
-                case .failure(let error):
-                    print("Failed to save swing: \(error.localizedDescription)")
+            ) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success:
+                        self?.showSavedToast()
+                    case .failure(let error):
+                        print("Failed to save swing: \(error.localizedDescription)")
+                    }
                 }
             }
         }
