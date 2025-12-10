@@ -12,6 +12,7 @@ final class SettingsOverlayView: UIView {
 
     // MARK: - Settings Keys
     private let replayRepeatCountKey = "receiver.replayRepeatCount"
+    private let slowMoSpeedKey = "receiver.slowMoSpeed"
 
     // MARK: - UI Elements
     private let containerView: UIView = {
@@ -78,6 +79,21 @@ final class SettingsOverlayView: UIView {
         return label
     }()
 
+    private let slowMoLabel: UILabel = {
+        let label = UILabel()
+        label.text = "Slow-Mo Speed"
+        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+
+    private let slowMoSegment: UISegmentedControl = {
+        let segment = UISegmentedControl(items: ["0.15x", "0.25x", "0.5x"])
+        segment.selectedSegmentIndex = 1  // Default 0.25x
+        segment.translatesAutoresizingMaskIntoConstraints = false
+        return segment
+    }()
+
     // MARK: - Init
 
     override init(frame: CGRect) {
@@ -103,7 +119,7 @@ final class SettingsOverlayView: UIView {
             containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
             containerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             containerView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            containerView.heightAnchor.constraint(equalToConstant: 220)
+            containerView.heightAnchor.constraint(equalToConstant: 280)
         ])
 
         // Title and close button
@@ -155,6 +171,22 @@ final class SettingsOverlayView: UIView {
 
         repeatCountStepper.addTarget(self, action: #selector(repeatCountChanged), for: .valueChanged)
 
+        // Slow-mo speed row
+        let slowMoRow = UIStackView(arrangedSubviews: [slowMoLabel, slowMoSegment])
+        slowMoRow.axis = .horizontal
+        slowMoRow.spacing = 12
+        slowMoRow.alignment = .center
+        slowMoRow.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(slowMoRow)
+
+        NSLayoutConstraint.activate([
+            slowMoRow.topAnchor.constraint(equalTo: repeatDescriptionLabel.bottomAnchor, constant: 20),
+            slowMoRow.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
+            slowMoRow.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20)
+        ])
+
+        slowMoSegment.addTarget(self, action: #selector(slowMoSpeedChanged), for: .valueChanged)
+
         // Tap outside to close
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(backgroundTapped(_:)))
         tapGesture.delegate = self
@@ -162,10 +194,18 @@ final class SettingsOverlayView: UIView {
     }
 
     private func loadSettings() {
+        // Replay count (default 3)
         let savedCount = UserDefaults.standard.integer(forKey: replayRepeatCountKey)
-        let count = savedCount > 0 ? savedCount : 1
+        let count = savedCount > 0 ? savedCount : 3
         repeatCountStepper.value = Double(count)
         repeatCountValueLabel.text = "\(count)"
+
+        // Slow-mo speed (default 0.25x = index 1)
+        if let _ = UserDefaults.standard.object(forKey: slowMoSpeedKey) {
+            slowMoSegment.selectedSegmentIndex = UserDefaults.standard.integer(forKey: slowMoSpeedKey)
+        } else {
+            slowMoSegment.selectedSegmentIndex = 1  // Default 0.25x
+        }
     }
 
     // MARK: - Actions
@@ -188,6 +228,11 @@ final class SettingsOverlayView: UIView {
         delegate?.settingsDidChange()
     }
 
+    @objc private func slowMoSpeedChanged() {
+        UserDefaults.standard.set(slowMoSegment.selectedSegmentIndex, forKey: slowMoSpeedKey)
+        delegate?.settingsDidChange()
+    }
+
     // MARK: - Show/Hide
 
     func show(in parentView: UIView) {
@@ -195,7 +240,7 @@ final class SettingsOverlayView: UIView {
         parentView.addSubview(self)
 
         // Start with container off screen
-        containerView.transform = CGAffineTransform(translationX: 0, y: 220)
+        containerView.transform = CGAffineTransform(translationX: 0, y: 280)
 
         UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut) {
             self.alpha = 1
@@ -217,7 +262,21 @@ final class SettingsOverlayView: UIView {
 
     static var replayRepeatCount: Int {
         let count = UserDefaults.standard.integer(forKey: "receiver.replayRepeatCount")
-        return count > 0 ? count : 1
+        return count > 0 ? count : 3
+    }
+
+    /// Returns slow-mo factor: 6.67 for 0.15x, 4.0 for 0.25x, 2.0 for 0.5x
+    static var slowMotionFactor: Double {
+        let index = UserDefaults.standard.integer(forKey: "receiver.slowMoSpeed")
+        // If never set, default to 0.25x (factor 4.0)
+        if UserDefaults.standard.object(forKey: "receiver.slowMoSpeed") == nil {
+            return 4.0
+        }
+        switch index {
+        case 0: return 6.67  // 0.15x = ~6.67x slower
+        case 1: return 4.0   // 0.25x = 4x slower
+        default: return 2.0  // 0.5x = 2x slower
+        }
     }
 }
 

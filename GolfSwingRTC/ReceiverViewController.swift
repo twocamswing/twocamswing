@@ -284,7 +284,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
     private var remoteReplaySequence = ReplaySequence()
     private var frontReplaySequence = ReplaySequence()
     private let replayWindow: TimeInterval = 3.0
-    private let slowMotionFactor: Double = 2.0
+    private var slowMotionFactor: Double = 2.0
     private var isRemoteMirrored = false
     private let remoteMirrorKey = "receiver.remoteMirror"
     private var remoteMirrorApplied = false
@@ -1059,6 +1059,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
 
     private func loadReplaySettings() {
         replayRepeatCount = SettingsOverlayView.replayRepeatCount
+        slowMotionFactor = SettingsOverlayView.slowMotionFactor
     }
 
     @objc private func handleMenuTapped() {

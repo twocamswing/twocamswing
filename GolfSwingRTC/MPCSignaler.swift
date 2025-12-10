@@ -122,6 +122,20 @@ final class MPCSignaler: NSObject {
     var isConnected: Bool {
         return !session.connectedPeers.isEmpty
     }
+
+    /// Restart discovery to speed up reconnection after disconnect
+    private func restartDiscovery() {
+        if let adv = advertiser {
+            print("MPC: Restarting advertiser...")
+            adv.stopAdvertisingPeer()
+            adv.startAdvertisingPeer()
+        }
+        if let b = browser {
+            print("MPC: Restarting browser...")
+            b.stopBrowsingForPeers()
+            b.startBrowsingForPeers()
+        }
+    }
 }
 
 extension MPCSignaler: MCSessionDelegate {
@@ -142,7 +156,9 @@ extension MPCSignaler: MCSessionDelegate {
             flushOutboxIfNeeded()
             onConnected?()
         } else if state == .notConnected {
-            print("MPC: Peer \(peerID.displayName) disconnected! Reason unknown.")
+            print("MPC: Peer \(peerID.displayName) disconnected! Restarting discovery...")
+            // Restart advertising/browsing to speed up reconnection
+            restartDiscovery()
         }
     }
 
