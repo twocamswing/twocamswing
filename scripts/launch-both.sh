@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-APP_BUNDLE_ID="com.mycompany.GolfSwingRTC"
+APP_BUNDLE_ID="com.twocamswing.app"
 
 DEFAULT_RED_UDID=00008030-0018494221DB802E
 DEFAULT_ORANGE_UDID=00008030-000C556E2600202E

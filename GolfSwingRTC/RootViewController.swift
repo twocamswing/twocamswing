@@ -66,6 +66,11 @@ final class RootViewController: UIViewController {
         guard !didAutoLaunch else { return }
         didAutoLaunch = true
 
+        // Debug: print all environment variables to help diagnose automation
+        let env = ProcessInfo.processInfo.environment
+        print("🔍 AUTO_ROLE env var: \(env["AUTO_ROLE"] ?? "nil")")
+        print("🔍 All env keys containing 'ROLE' or 'AUTO': \(env.keys.filter { $0.contains("ROLE") || $0.contains("AUTO") })")
+
         switch AutoRole(environmentValue: ProcessInfo.processInfo.environment["AUTO_ROLE"]) {
         case .sender:
             startSender()

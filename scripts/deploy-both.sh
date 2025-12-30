@@ -8,7 +8,7 @@ APP_NAME="GolfSwingRTC"
 SCHEME="$APP_NAME"
 WORKSPACE="$REPO_ROOT/$APP_NAME.xcworkspace"
 BUILD_CONFIGURATION="Debug"
-APP_BUNDLE_ID="com.mycompany.GolfSwingRTC"
+APP_BUNDLE_ID="com.twocamswing.app"
 APP_PATH="$DERIVED_DATA/Build/Products/${BUILD_CONFIGURATION}-iphoneos/${APP_NAME}.app"
 
 DEFAULT_RED_UDID=00008030-0018494221DB802E
@@ -42,16 +42,18 @@ install_app() {
   local udid=$2
 
   log "Installing on $device_name ($udid)..."
-  if ! xcodebuild \
-    -workspace "$WORKSPACE" \
-    -scheme "$SCHEME" \
-    -configuration "$BUILD_CONFIGURATION" \
-    -destination "id=$udid" \
-    -derivedDataPath "$DERIVED_DATA" \
-    install >/tmp/${device_name}-install.log 2>&1; then
+  # Use ios-deploy for reliable installation (handles trust automatically)
+  if command -v ios-deploy >/dev/null 2>&1; then
+    if ! ios-deploy --id "$udid" --bundle "$APP_PATH" --no-wifi 2>&1 | tee /tmp/${device_name}-install.log | grep -E "Install|%\]|Error"; then
       log "Install failed on $device_name. See /tmp/${device_name}-install.log"
-      cat /tmp/${device_name}-install.log
       return 1
+    fi
+  else
+    # Fallback to devicectl
+    if ! xcrun devicectl device install app --device "$udid" "$APP_PATH" 2>&1 | tee /tmp/${device_name}-install.log; then
+      log "Install failed on $device_name. See /tmp/${device_name}-install.log"
+      return 1
+    fi
   fi
   log "Install complete on $device_name"
 }
