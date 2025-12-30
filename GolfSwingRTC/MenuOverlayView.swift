@@ -42,6 +42,7 @@ final class MenuOverlayView: UIView {
         button.tintColor = .label
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = "Video Library"
+        button.accessibilityIdentifier = "libraryButton"
         return button
     }()
 

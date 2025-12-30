@@ -265,6 +265,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         button.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.85)
         button.layer.cornerRadius = 28
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityIdentifier = "replayButton"
         return button
     }()
     private let localFlipButton: UIButton = {
@@ -592,6 +593,7 @@ final class ReceiverViewController: UIViewController, RTCPeerConnectionDelegate,
         menuBtn.backgroundColor = UIColor.black.withAlphaComponent(0.6)
         menuBtn.layer.cornerRadius = 18
         menuBtn.translatesAutoresizingMaskIntoConstraints = false
+        menuBtn.accessibilityIdentifier = "menuButton"
         remoteContainer.addSubview(menuBtn)
         NSLayoutConstraint.activate([
             menuBtn.widthAnchor.constraint(equalToConstant: 36),

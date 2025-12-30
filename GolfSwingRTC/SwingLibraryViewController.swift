@@ -17,6 +17,7 @@ final class SwingLibraryViewController: UIViewController {
         cv.dataSource = self
         cv.register(SwingCell.self, forCellWithReuseIdentifier: SwingCell.reuseId)
         cv.translatesAutoresizingMaskIntoConstraints = false
+        cv.accessibilityIdentifier = "swingLibraryCollection"
         return cv
     }()
 
@@ -54,10 +55,33 @@ final class SwingLibraryViewController: UIViewController {
         button.setTitle("Edit", for: .normal)
         button.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityIdentifier = "editButton"
         return button
     }()
 
     private var isEditMode = false
+    private var selectedIndices: Set<Int> = []
+
+    private let deleteSelectedButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Delete Selected", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
+        button.setTitleColor(.systemRed, for: .normal)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        button.accessibilityIdentifier = "deleteSelectedButton"
+        return button
+    }()
+
+    private let selectAllButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Select All", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 15)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        button.accessibilityIdentifier = "selectAllButton"
+        return button
+    }()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -95,13 +119,38 @@ final class SwingLibraryViewController: UIViewController {
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
 
+        // Bottom toolbar for bulk actions
+        let toolbarView = UIView()
+        toolbarView.translatesAutoresizingMaskIntoConstraints = false
+        toolbarView.backgroundColor = .systemBackground
+        view.addSubview(toolbarView)
+
+        toolbarView.addSubview(selectAllButton)
+        toolbarView.addSubview(deleteSelectedButton)
+
+        NSLayoutConstraint.activate([
+            toolbarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbarView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            toolbarView.heightAnchor.constraint(equalToConstant: 50),
+
+            selectAllButton.leadingAnchor.constraint(equalTo: toolbarView.leadingAnchor, constant: 16),
+            selectAllButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor),
+
+            deleteSelectedButton.trailingAnchor.constraint(equalTo: toolbarView.trailingAnchor, constant: -16),
+            deleteSelectedButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor)
+        ])
+
+        selectAllButton.addTarget(self, action: #selector(selectAllTapped), for: .touchUpInside)
+        deleteSelectedButton.addTarget(self, action: #selector(deleteSelectedTapped), for: .touchUpInside)
+
         // Collection view
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            collectionView.bottomAnchor.constraint(equalTo: toolbarView.topAnchor)
         ])
 
         // Empty state
@@ -128,7 +177,90 @@ final class SwingLibraryViewController: UIViewController {
     @objc private func editTapped() {
         isEditMode.toggle()
         editButton.setTitle(isEditMode ? "Done" : "Edit", for: .normal)
+
+        // Show/hide toolbar buttons
+        selectAllButton.isHidden = !isEditMode
+        deleteSelectedButton.isHidden = !isEditMode
+
+        // Clear selection when exiting edit mode
+        if !isEditMode {
+            selectedIndices.removeAll()
+        }
+
+        updateDeleteButtonState()
         collectionView.reloadData()
+    }
+
+    @objc private func selectAllTapped() {
+        if selectedIndices.count == swings.count {
+            // Deselect all
+            selectedIndices.removeAll()
+            selectAllButton.setTitle("Select All", for: .normal)
+        } else {
+            // Select all
+            selectedIndices = Set(0..<swings.count)
+            selectAllButton.setTitle("Deselect All", for: .normal)
+        }
+        updateDeleteButtonState()
+        collectionView.reloadData()
+    }
+
+    @objc private func deleteSelectedTapped() {
+        guard !selectedIndices.isEmpty else { return }
+
+        let count = selectedIndices.count
+        let alert = UIAlertController(
+            title: "Delete \(count) Swing\(count > 1 ? "s" : "")?",
+            message: "This will permanently remove \(count > 1 ? "these recordings" : "this recording").",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+            self?.performBulkDelete()
+        })
+        present(alert, animated: true)
+    }
+
+    private func performBulkDelete() {
+        // Delete in reverse order to maintain correct indices
+        let sortedIndices = selectedIndices.sorted(by: >)
+        for index in sortedIndices {
+            let swing = swings[index]
+            SwingStorage.shared.deleteSwing(swing)
+            swings.remove(at: index)
+        }
+
+        selectedIndices.removeAll()
+        collectionView.reloadData()
+        updateEmptyState()
+        updateDeleteButtonState()
+    }
+
+    private func updateDeleteButtonState() {
+        let count = selectedIndices.count
+        if count > 0 {
+            deleteSelectedButton.setTitle("Delete (\(count))", for: .normal)
+            deleteSelectedButton.isEnabled = true
+        } else {
+            deleteSelectedButton.setTitle("Delete Selected", for: .normal)
+            deleteSelectedButton.isEnabled = false
+        }
+    }
+
+    private func toggleSelection(at index: Int) {
+        if selectedIndices.contains(index) {
+            selectedIndices.remove(index)
+        } else {
+            selectedIndices.insert(index)
+        }
+        updateDeleteButtonState()
+
+        // Update select all button text
+        if selectedIndices.count == swings.count {
+            selectAllButton.setTitle("Deselect All", for: .normal)
+        } else {
+            selectAllButton.setTitle("Select All", for: .normal)
+        }
     }
 
     private func deleteSwing(at indexPath: IndexPath) {
@@ -195,7 +327,9 @@ extension SwingLibraryViewController: UICollectionViewDataSource {
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: SwingCell.reuseId, for: indexPath) as! SwingCell
         let swing = swings[indexPath.item]
-        cell.configure(with: swing, isEditMode: isEditMode)
+        let isSelected = selectedIndices.contains(indexPath.item)
+        cell.configure(with: swing, isEditMode: isEditMode, isSelected: isSelected)
+        cell.accessibilityIdentifier = "swingCell_\(indexPath.item)"
         cell.onDelete = { [weak self] in
             self?.deleteSwing(at: indexPath)
         }
@@ -216,9 +350,13 @@ extension SwingLibraryViewController: UICollectionViewDelegateFlowLayout {
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard !isEditMode else { return }
-        let swing = swings[indexPath.item]
-        playSwing(swing)
+        if isEditMode {
+            toggleSelection(at: indexPath.item)
+            collectionView.reloadItems(at: [indexPath])
+        } else {
+            let swing = swings[indexPath.item]
+            playSwing(swing)
+        }
     }
 }
 
@@ -269,6 +407,19 @@ private final class SwingCell: UICollectionViewCell {
         return iv
     }()
 
+    private let selectionCheckmark: UIImageView = {
+        let iv = UIImageView()
+        let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .bold)
+        iv.image = UIImage(systemName: "checkmark.circle.fill", withConfiguration: config)
+        iv.tintColor = .systemBlue
+        iv.backgroundColor = .white
+        iv.layer.cornerRadius = 12
+        iv.clipsToBounds = true
+        iv.translatesAutoresizingMaskIntoConstraints = false
+        iv.isHidden = true
+        return iv
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupCell()
@@ -282,6 +433,7 @@ private final class SwingCell: UICollectionViewCell {
         contentView.addSubview(thumbnailView)
         contentView.addSubview(dateLabel)
         contentView.addSubview(deleteButton)
+        contentView.addSubview(selectionCheckmark)
         thumbnailView.addSubview(playIcon)
 
         NSLayoutConstraint.activate([
@@ -299,6 +451,11 @@ private final class SwingCell: UICollectionViewCell {
             deleteButton.widthAnchor.constraint(equalToConstant: 24),
             deleteButton.heightAnchor.constraint(equalToConstant: 24),
 
+            selectionCheckmark.bottomAnchor.constraint(equalTo: thumbnailView.bottomAnchor, constant: -4),
+            selectionCheckmark.trailingAnchor.constraint(equalTo: thumbnailView.trailingAnchor, constant: -4),
+            selectionCheckmark.widthAnchor.constraint(equalToConstant: 24),
+            selectionCheckmark.heightAnchor.constraint(equalToConstant: 24),
+
             playIcon.centerXAnchor.constraint(equalTo: thumbnailView.centerXAnchor),
             playIcon.centerYAnchor.constraint(equalTo: thumbnailView.centerYAnchor)
         ])
@@ -306,7 +463,7 @@ private final class SwingCell: UICollectionViewCell {
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
     }
 
-    func configure(with swing: SavedSwing, isEditMode: Bool) {
+    func configure(with swing: SavedSwing, isEditMode: Bool, isSelected: Bool = false) {
         thumbnailView.image = SwingStorage.shared.getThumbnail(for: swing)
 
         let formatter = DateFormatter()
@@ -314,8 +471,13 @@ private final class SwingCell: UICollectionViewCell {
         formatter.timeStyle = .short
         dateLabel.text = formatter.string(from: swing.date)
 
-        deleteButton.isHidden = !isEditMode
+        deleteButton.isHidden = true  // Individual delete hidden in favor of bulk selection
         playIcon.isHidden = isEditMode
+        selectionCheckmark.isHidden = !isEditMode || !isSelected
+
+        // Visual feedback for selection
+        thumbnailView.layer.borderWidth = isSelected ? 3 : 0
+        thumbnailView.layer.borderColor = isSelected ? UIColor.systemBlue.cgColor : nil
     }
 
     @objc private func deleteTapped() {
