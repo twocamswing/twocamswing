@@ -14,6 +14,8 @@
 	<string>Needed for capturing golf swings.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Used for connecting two iOS devices directoy for golf swing streaming.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save golf swing videos to your photo library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

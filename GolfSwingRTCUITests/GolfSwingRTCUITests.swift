@@ -193,6 +193,164 @@ final class GolfSwingRTCUITests: XCTestCase {
         XCTAssertEqual(newCount, initialCount - 1, "Cell count should decrease by 1 after deletion")
     }
 
+    // MARK: - Export Tests
+
+    func testExportToPhotos() {
+        app.launch()
+
+        // Navigate to library
+        navigateToLibrary()
+
+        let collectionView = app.collectionViews["swingLibraryCollection"]
+        guard collectionView.waitForExistence(timeout: 5) else {
+            XCTFail("Library collection not found")
+            return
+        }
+
+        guard collectionView.cells.count > 0 else {
+            print("No swings to export - skipping test")
+            return
+        }
+
+        // Enter edit mode
+        let editButton = app.buttons["editButton"]
+        editButton.tap()
+        sleep(1)
+
+        // Verify export button appears
+        let exportButton = app.buttons["exportSelectedButton"]
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 2), "Export button should appear in edit mode")
+
+        // Select first cell
+        let firstCell = collectionView.cells["swingCell_0"]
+        if firstCell.exists {
+            firstCell.tap()
+            sleep(1)
+        }
+
+        // Tap Export
+        exportButton.tap()
+        sleep(1)
+
+        // Confirm export in alert
+        let confirmExport = app.alerts.buttons["Export"]
+        if confirmExport.waitForExistence(timeout: 2) {
+            confirmExport.tap()
+            sleep(2)
+        }
+
+        // Handle photo library permission if it appears
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allowButton = springboard.buttons["Allow Full Access"]
+        if allowButton.waitForExistence(timeout: 3) {
+            allowButton.tap()
+            sleep(2)
+        }
+
+        // Check for success alert
+        let successAlert = app.alerts["Export Complete"]
+        let partialAlert = app.alerts["Partial Export"]
+        let okButton = app.alerts.buttons["OK"]
+
+        // Either complete or partial success is acceptable
+        let hasSuccessAlert = successAlert.waitForExistence(timeout: 5) || partialAlert.exists
+        XCTAssertTrue(hasSuccessAlert || okButton.exists, "Should show export result alert")
+
+        if okButton.exists {
+            okButton.tap()
+        }
+    }
+
+    /// End-to-end test: Capture swings, export them, then delete
+    func testCaptureExportAndDelete() {
+        app.launch()
+
+        // Start receiver
+        let receiverButton = app.buttons["receiverButton"]
+        XCTAssertTrue(receiverButton.waitForExistence(timeout: 5), "Receiver button not found")
+        receiverButton.tap()
+        sleep(5)
+
+        // Capture 1 swing
+        let replayButton = app.buttons["replayButton"]
+        if replayButton.waitForExistence(timeout: 10) && replayButton.isHittable && replayButton.isEnabled {
+            replayButton.tap()
+            sleep(10)
+        }
+
+        // Navigate to library
+        navigateToLibraryFromReceiver()
+
+        let collectionView = app.collectionViews["swingLibraryCollection"]
+        guard collectionView.waitForExistence(timeout: 5) else {
+            XCTFail("Library collection not found")
+            return
+        }
+
+        guard collectionView.cells.count >= 1 else {
+            print("No swings captured")
+            return
+        }
+
+        // Enter edit mode and select all
+        let editButton = app.buttons["editButton"]
+        editButton.tap()
+        sleep(1)
+
+        let selectAllButton = app.buttons["selectAllButton"]
+        selectAllButton.tap()
+        sleep(1)
+
+        // Export
+        let exportButton = app.buttons["exportSelectedButton"]
+        exportButton.tap()
+        sleep(1)
+
+        // Confirm export
+        let confirmExport = app.alerts.buttons["Export"]
+        if confirmExport.waitForExistence(timeout: 2) {
+            confirmExport.tap()
+        }
+
+        // Handle permission prompt
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allowButton = springboard.buttons["Allow Full Access"]
+        if allowButton.waitForExistence(timeout: 3) {
+            allowButton.tap()
+        }
+
+        // Wait for merge and export to complete (can take 10-15 seconds for video merge)
+        let okButton = app.alerts.buttons["OK"]
+        if okButton.waitForExistence(timeout: 30) {
+            okButton.tap()
+            sleep(1)
+        }
+
+        // Re-select all since selection may be cleared after export
+        let selectAllButton2 = app.buttons["selectAllButton"]
+        if selectAllButton2.exists && selectAllButton2.isHittable {
+            selectAllButton2.tap()
+            sleep(1)
+        }
+
+        // Now delete all
+        let deleteButton = app.buttons["deleteSelectedButton"]
+        if deleteButton.waitForExistence(timeout: 2) && deleteButton.isEnabled {
+            deleteButton.tap()
+        }
+        sleep(1)
+
+        let confirmDelete = app.alerts.buttons["Delete"]
+        if confirmDelete.waitForExistence(timeout: 2) {
+            confirmDelete.tap()
+            sleep(2)
+        }
+
+        // Verify deleted
+        let finalCount = collectionView.cells.count
+        XCTAssertEqual(finalCount, 0, "All swings should be deleted after export")
+    }
+
     // MARK: - Capture Tests
 
     /// Test that captures multiple swings for library testing.

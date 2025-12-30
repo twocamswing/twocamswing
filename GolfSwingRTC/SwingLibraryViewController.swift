@@ -1,5 +1,6 @@
 import UIKit
 import AVKit
+import Photos
 
 final class SwingLibraryViewController: UIViewController {
 
@@ -73,6 +74,16 @@ final class SwingLibraryViewController: UIViewController {
         return button
     }()
 
+    private let exportSelectedButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("Export", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        button.accessibilityIdentifier = "exportSelectedButton"
+        return button
+    }()
+
     private let selectAllButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle("Select All", for: .normal)
@@ -126,6 +137,7 @@ final class SwingLibraryViewController: UIViewController {
         view.addSubview(toolbarView)
 
         toolbarView.addSubview(selectAllButton)
+        toolbarView.addSubview(exportSelectedButton)
         toolbarView.addSubview(deleteSelectedButton)
 
         NSLayoutConstraint.activate([
@@ -137,11 +149,15 @@ final class SwingLibraryViewController: UIViewController {
             selectAllButton.leadingAnchor.constraint(equalTo: toolbarView.leadingAnchor, constant: 16),
             selectAllButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor),
 
+            exportSelectedButton.trailingAnchor.constraint(equalTo: deleteSelectedButton.leadingAnchor, constant: -16),
+            exportSelectedButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor),
+
             deleteSelectedButton.trailingAnchor.constraint(equalTo: toolbarView.trailingAnchor, constant: -16),
             deleteSelectedButton.centerYAnchor.constraint(equalTo: toolbarView.centerYAnchor)
         ])
 
         selectAllButton.addTarget(self, action: #selector(selectAllTapped), for: .touchUpInside)
+        exportSelectedButton.addTarget(self, action: #selector(exportSelectedTapped), for: .touchUpInside)
         deleteSelectedButton.addTarget(self, action: #selector(deleteSelectedTapped), for: .touchUpInside)
 
         // Collection view
@@ -180,6 +196,7 @@ final class SwingLibraryViewController: UIViewController {
 
         // Show/hide toolbar buttons
         selectAllButton.isHidden = !isEditMode
+        exportSelectedButton.isHidden = !isEditMode
         deleteSelectedButton.isHidden = !isEditMode
 
         // Clear selection when exiting edit mode
@@ -187,7 +204,7 @@ final class SwingLibraryViewController: UIViewController {
             selectedIndices.removeAll()
         }
 
-        updateDeleteButtonState()
+        updateButtonStates()
         collectionView.reloadData()
     }
 
@@ -201,8 +218,311 @@ final class SwingLibraryViewController: UIViewController {
             selectedIndices = Set(0..<swings.count)
             selectAllButton.setTitle("Deselect All", for: .normal)
         }
-        updateDeleteButtonState()
+        updateButtonStates()
         collectionView.reloadData()
+    }
+
+    @objc private func exportSelectedTapped() {
+        guard !selectedIndices.isEmpty else { return }
+
+        let count = selectedIndices.count
+        let alert = UIAlertController(
+            title: "Export \(count) Video\(count > 1 ? "s" : "")?",
+            message: "Save to your photo library.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Export", style: .default) { [weak self] _ in
+            self?.performExport()
+        })
+        present(alert, animated: true)
+    }
+
+    private func performExport() {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+            DispatchQueue.main.async {
+                switch status {
+                case .authorized, .limited:
+                    self?.exportVideosToPhotoLibrary()
+                case .denied, .restricted:
+                    self?.showPhotoLibraryDeniedAlert()
+                case .notDetermined:
+                    break
+                @unknown default:
+                    break
+                }
+            }
+        }
+    }
+
+    private func exportVideosToPhotoLibrary() {
+        let selectedSwings = selectedIndices.sorted().compactMap { index -> SavedSwing? in
+            guard index < swings.count else { return nil }
+            return swings[index]
+        }
+
+        var exportedCount = 0
+        var errorCount = 0
+        let group = DispatchGroup()
+
+        for swing in selectedSwings {
+            guard let remoteURL = SwingStorage.shared.getVideoURL(for: swing, front: false) else {
+                errorCount += 1
+                continue
+            }
+
+            let frontURL = SwingStorage.shared.getVideoURL(for: swing, front: true)
+
+            if let frontURL = frontURL {
+                // Merge both videos side-by-side
+                group.enter()
+                mergeSideBySide(remoteURL: remoteURL, frontURL: frontURL) { [weak self] mergedURL in
+                    guard let mergedURL = mergedURL else {
+                        errorCount += 1
+                        group.leave()
+                        return
+                    }
+
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: mergedURL)
+                    }) { success, _ in
+                        // Clean up temp file
+                        try? FileManager.default.removeItem(at: mergedURL)
+                        if success {
+                            exportedCount += 1
+                        } else {
+                            errorCount += 1
+                        }
+                        group.leave()
+                    }
+                }
+            } else {
+                // Single video only - export as-is
+                group.enter()
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: remoteURL)
+                }) { success, _ in
+                    if success {
+                        exportedCount += 1
+                    } else {
+                        errorCount += 1
+                    }
+                    group.leave()
+                }
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            self?.showExportResultAlert(exported: exportedCount, errors: errorCount)
+        }
+    }
+
+    private func mergeSideBySide(remoteURL: URL, frontURL: URL, completion: @escaping (URL?) -> Void) {
+        let remoteAsset = AVAsset(url: remoteURL)
+        let frontAsset = AVAsset(url: frontURL)
+
+        // Create composition
+        let composition = AVMutableComposition()
+
+        guard let remoteTrack = remoteAsset.tracks(withMediaType: .video).first,
+              let frontTrack = frontAsset.tracks(withMediaType: .video).first else {
+            completion(nil)
+            return
+        }
+
+        let duration = min(remoteAsset.duration, frontAsset.duration)
+
+        // Add video tracks to composition
+        guard let compositionRemoteTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let compositionFrontTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            completion(nil)
+            return
+        }
+
+        do {
+            try compositionRemoteTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: remoteTrack, at: .zero)
+            try compositionFrontTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: frontTrack, at: .zero)
+        } catch {
+            completion(nil)
+            return
+        }
+
+        // Get video sizes
+        let remoteSize = remoteTrack.naturalSize.applying(remoteTrack.preferredTransform)
+        let frontSize = frontTrack.naturalSize.applying(frontTrack.preferredTransform)
+
+        let remoteWidth = abs(remoteSize.width)
+        let remoteHeight = abs(remoteSize.height)
+        let frontWidth = abs(frontSize.width)
+        let frontHeight = abs(frontSize.height)
+
+        // Output size: side by side, scaled to same height
+        let outputHeight: CGFloat = max(remoteHeight, frontHeight)
+        let remoteScaledWidth = remoteWidth * (outputHeight / remoteHeight)
+        let frontScaledWidth = frontWidth * (outputHeight / frontHeight)
+        let outputWidth = remoteScaledWidth + frontScaledWidth
+        let outputSize = CGSize(width: outputWidth, height: outputHeight)
+
+        // Create video composition
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.renderSize = outputSize
+
+        // Layer instruction for front video (left side)
+        let frontInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionFrontTrack)
+        let frontScale = outputHeight / frontHeight
+        var frontTransform = CGAffineTransform(scaleX: frontScale, y: frontScale)
+        if frontSize.width < 0 || frontSize.height < 0 {
+            frontTransform = frontTrack.preferredTransform.concatenating(CGAffineTransform(translationX: frontSize.width < 0 ? frontScaledWidth : 0, y: frontSize.height < 0 ? outputHeight : 0))
+            frontTransform = frontTransform.scaledBy(x: frontScale, y: frontScale)
+        }
+        frontInstruction.setTransform(frontTransform, at: .zero)
+
+        // Layer instruction for remote video (right side)
+        let remoteInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionRemoteTrack)
+        let remoteScale = outputHeight / remoteHeight
+        var remoteTransform = CGAffineTransform(translationX: frontScaledWidth, y: 0)
+        remoteTransform = remoteTransform.scaledBy(x: remoteScale, y: remoteScale)
+        if remoteSize.width < 0 || remoteSize.height < 0 {
+            remoteTransform = remoteTrack.preferredTransform.concatenating(CGAffineTransform(translationX: frontScaledWidth + (remoteSize.width < 0 ? remoteScaledWidth : 0), y: remoteSize.height < 0 ? outputHeight : 0))
+        }
+        remoteInstruction.setTransform(remoteTransform, at: .zero)
+
+        // Main instruction
+        let mainInstruction = AVMutableVideoCompositionInstruction()
+        mainInstruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        mainInstruction.layerInstructions = [frontInstruction, remoteInstruction]
+
+        videoComposition.instructions = [mainInstruction]
+
+        // Create watermark overlay
+        let videoLayer = CALayer()
+        videoLayer.frame = CGRect(origin: .zero, size: outputSize)
+
+        let parentLayer = CALayer()
+        parentLayer.frame = CGRect(origin: .zero, size: outputSize)
+
+        let overlayLayer = CALayer()
+        overlayLayer.frame = CGRect(origin: .zero, size: outputSize)
+
+        parentLayer.addSublayer(videoLayer)
+        parentLayer.addSublayer(overlayLayer)
+
+        // Add watermark to left pane (front camera)
+        addWatermark(to: overlayLayer, paneRect: CGRect(x: 0, y: 0, width: frontScaledWidth, height: outputHeight))
+
+        // Add watermark to right pane (remote camera)
+        addWatermark(to: overlayLayer, paneRect: CGRect(x: frontScaledWidth, y: 0, width: remoteScaledWidth, height: outputHeight))
+
+        videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+
+        // Export
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("merged_\(UUID().uuidString).mp4")
+
+        guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+            completion(nil)
+            return
+        }
+
+        exporter.outputURL = tempURL
+        exporter.outputFileType = .mp4
+        exporter.videoComposition = videoComposition
+
+        exporter.exportAsynchronously {
+            DispatchQueue.main.async {
+                if exporter.status == .completed {
+                    completion(tempURL)
+                } else {
+                    print("Export failed: \(exporter.error?.localizedDescription ?? "unknown")")
+                    completion(nil)
+                }
+            }
+        }
+    }
+
+    private func addWatermark(to layer: CALayer, paneRect: CGRect) {
+        let margin: CGFloat = 40
+        let iconSize: CGFloat = 96
+        let fontSize: CGFloat = 56
+
+        // Container for icon + text
+        let watermarkLayer = CALayer()
+
+        // Load app icon
+        if let iconImage = UIImage(named: "icon") ?? UIImage(named: "AppIcon") {
+            let iconLayer = CALayer()
+            iconLayer.contents = iconImage.cgImage
+            iconLayer.frame = CGRect(x: 0, y: 0, width: iconSize, height: iconSize)
+            iconLayer.contentsGravity = .resizeAspect
+            watermarkLayer.addSublayer(iconLayer)
+        }
+
+        // Text layer
+        let textLayer = CATextLayer()
+        textLayer.string = "twocamswing.com"
+        textLayer.font = UIFont.systemFont(ofSize: fontSize, weight: .medium)
+        textLayer.fontSize = fontSize
+        textLayer.foregroundColor = UIColor.white.cgColor
+        textLayer.shadowColor = UIColor.black.cgColor
+        textLayer.shadowOffset = CGSize(width: 2, height: 2)
+        textLayer.shadowOpacity = 0.8
+        textLayer.shadowRadius = 4
+        textLayer.alignmentMode = .left
+        textLayer.contentsScale = UIScreen.main.scale
+
+        // Size text layer
+        let textWidth: CGFloat = 480
+        textLayer.frame = CGRect(x: iconSize + 16, y: 16, width: textWidth, height: fontSize + 16)
+
+        watermarkLayer.addSublayer(textLayer)
+
+        // Position watermark at bottom-right of pane
+        let watermarkWidth = iconSize + 16 + textWidth
+        let watermarkHeight = iconSize
+        watermarkLayer.frame = CGRect(
+            x: paneRect.maxX - watermarkWidth - margin,
+            y: margin,  // Bottom in CALayer coordinates (y=0 is bottom)
+            width: watermarkWidth,
+            height: watermarkHeight
+        )
+        watermarkLayer.opacity = 0.7
+
+        layer.addSublayer(watermarkLayer)
+    }
+
+    private func showExportResultAlert(exported: Int, errors: Int) {
+        let title: String
+        let message: String
+
+        if errors == 0 {
+            title = "Export Complete"
+            message = "\(exported) video\(exported > 1 ? "s" : "") saved to Photos."
+        } else if exported > 0 {
+            title = "Partial Export"
+            message = "\(exported) video\(exported > 1 ? "s" : "") saved. \(errors) failed."
+        } else {
+            title = "Export Failed"
+            message = "Could not save videos to Photos."
+        }
+
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func showPhotoLibraryDeniedAlert() {
+        let alert = UIAlertController(
+            title: "Photo Library Access Denied",
+            message: "Please enable photo library access in Settings to export videos.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Open Settings", style: .default) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        })
+        present(alert, animated: true)
     }
 
     @objc private func deleteSelectedTapped() {
@@ -233,16 +553,20 @@ final class SwingLibraryViewController: UIViewController {
         selectedIndices.removeAll()
         collectionView.reloadData()
         updateEmptyState()
-        updateDeleteButtonState()
+        updateButtonStates()
     }
 
-    private func updateDeleteButtonState() {
+    private func updateButtonStates() {
         let count = selectedIndices.count
         if count > 0 {
+            exportSelectedButton.setTitle("Export (\(count))", for: .normal)
+            exportSelectedButton.isEnabled = true
             deleteSelectedButton.setTitle("Delete (\(count))", for: .normal)
             deleteSelectedButton.isEnabled = true
         } else {
-            deleteSelectedButton.setTitle("Delete Selected", for: .normal)
+            exportSelectedButton.setTitle("Export", for: .normal)
+            exportSelectedButton.isEnabled = false
+            deleteSelectedButton.setTitle("Delete", for: .normal)
             deleteSelectedButton.isEnabled = false
         }
     }
@@ -253,7 +577,7 @@ final class SwingLibraryViewController: UIViewController {
         } else {
             selectedIndices.insert(index)
         }
-        updateDeleteButtonState()
+        updateButtonStates()
 
         // Update select all button text
         if selectedIndices.count == swings.count {
