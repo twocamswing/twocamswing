@@ -232,6 +232,13 @@ final class GolfSwingRTCUITests: XCTestCase {
         exportButton.tap()
         sleep(1)
 
+        // Select export mode from action sheet (if dual camera)
+        let sideBySideOption = app.buttons["Both Cameras (Side-by-Side)"]
+        if sideBySideOption.waitForExistence(timeout: 2) {
+            sideBySideOption.tap()
+            sleep(1)
+        }
+
         // Confirm export in alert
         let confirmExport = app.alerts.buttons["Export"]
         if confirmExport.waitForExistence(timeout: 2) {
@@ -305,6 +312,13 @@ final class GolfSwingRTCUITests: XCTestCase {
         let exportButton = app.buttons["exportSelectedButton"]
         exportButton.tap()
         sleep(1)
+
+        // Select export mode from action sheet (if dual camera)
+        let sideBySideOption = app.buttons["Both Cameras (Side-by-Side)"]
+        if sideBySideOption.waitForExistence(timeout: 2) {
+            sideBySideOption.tap()
+            sleep(1)
+        }
 
         // Confirm export
         let confirmExport = app.alerts.buttons["Export"]

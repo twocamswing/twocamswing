@@ -222,10 +222,66 @@ final class SwingLibraryViewController: UIViewController {
         collectionView.reloadData()
     }
 
+    private enum ExportMode {
+        case sideBySide
+        case dtlOnly      // Down the line (remote camera)
+        case faceOnOnly   // Face on (front camera)
+    }
+
+    private var currentExportMode: ExportMode = .sideBySide
+
     @objc private func exportSelectedTapped() {
         guard !selectedIndices.isEmpty else { return }
 
         let count = selectedIndices.count
+
+        // Check if any selected swing has dual cameras
+        let selectedSwings = selectedIndices.compactMap { index -> SavedSwing? in
+            guard index < swings.count else { return nil }
+            return swings[index]
+        }
+        let hasDualCamera = selectedSwings.contains { $0.frontVideoFilename != nil }
+
+        if hasDualCamera {
+            // Show export options
+            let alert = UIAlertController(
+                title: "Export \(count) Video\(count > 1 ? "s" : "")",
+                message: "Choose export format",
+                preferredStyle: .actionSheet
+            )
+
+            alert.addAction(UIAlertAction(title: "Both Cameras (Side-by-Side)", style: .default) { [weak self] _ in
+                self?.currentExportMode = .sideBySide
+                self?.confirmAndExport(count: count)
+            })
+
+            alert.addAction(UIAlertAction(title: "DTL Only (Down the Line)", style: .default) { [weak self] _ in
+                self?.currentExportMode = .dtlOnly
+                self?.confirmAndExport(count: count)
+            })
+
+            alert.addAction(UIAlertAction(title: "Face On Only", style: .default) { [weak self] _ in
+                self?.currentExportMode = .faceOnOnly
+                self?.confirmAndExport(count: count)
+            })
+
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+
+            // For iPad
+            if let popover = alert.popoverPresentationController {
+                popover.sourceView = exportSelectedButton
+                popover.sourceRect = exportSelectedButton.bounds
+            }
+
+            present(alert, animated: true)
+        } else {
+            // Single camera only - export directly
+            currentExportMode = .dtlOnly
+            confirmAndExport(count: count)
+        }
+    }
+
+    private func confirmAndExport(count: Int) {
         let alert = UIAlertController(
             title: "Export \(count) Video\(count > 1 ? "s" : "")?",
             message: "Save to your photo library.",
@@ -266,48 +322,81 @@ final class SwingLibraryViewController: UIViewController {
         let group = DispatchGroup()
 
         for swing in selectedSwings {
-            guard let remoteURL = SwingStorage.shared.getVideoURL(for: swing, front: false) else {
-                errorCount += 1
-                continue
-            }
-
+            let remoteURL = SwingStorage.shared.getVideoURL(for: swing, front: false)
             let frontURL = SwingStorage.shared.getVideoURL(for: swing, front: true)
 
-            if let frontURL = frontURL {
-                // Merge both videos side-by-side
-                group.enter()
-                mergeSideBySide(remoteURL: remoteURL, frontURL: frontURL) { [weak self] mergedURL in
-                    guard let mergedURL = mergedURL else {
-                        errorCount += 1
-                        group.leave()
-                        return
-                    }
-
-                    PHPhotoLibrary.shared().performChanges({
-                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: mergedURL)
-                    }) { success, _ in
-                        // Clean up temp file
-                        try? FileManager.default.removeItem(at: mergedURL)
-                        if success {
-                            exportedCount += 1
-                        } else {
+            switch currentExportMode {
+            case .sideBySide:
+                // Merge both videos side-by-side (with watermark)
+                if let remoteURL = remoteURL, let frontURL = frontURL {
+                    group.enter()
+                    mergeSideBySide(remoteURL: remoteURL, frontURL: frontURL) { mergedURL in
+                        guard let mergedURL = mergedURL else {
                             errorCount += 1
+                            group.leave()
+                            return
                         }
+
+                        PHPhotoLibrary.shared().performChanges({
+                            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: mergedURL)
+                        }) { success, _ in
+                            try? FileManager.default.removeItem(at: mergedURL)
+                            if success {
+                                exportedCount += 1
+                            } else {
+                                errorCount += 1
+                            }
+                            group.leave()
+                        }
+                    }
+                } else if let remoteURL = remoteURL {
+                    // Fallback to remote only if no front
+                    group.enter()
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: remoteURL)
+                    }) { success, _ in
+                        if success { exportedCount += 1 } else { errorCount += 1 }
                         group.leave()
                     }
+                } else {
+                    errorCount += 1
                 }
-            } else {
-                // Single video only - export as-is
-                group.enter()
-                PHPhotoLibrary.shared().performChanges({
-                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: remoteURL)
-                }) { success, _ in
-                    if success {
-                        exportedCount += 1
-                    } else {
-                        errorCount += 1
+
+            case .dtlOnly:
+                // Export remote/DTL camera only
+                if let remoteURL = remoteURL {
+                    group.enter()
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: remoteURL)
+                    }) { success, _ in
+                        if success { exportedCount += 1 } else { errorCount += 1 }
+                        group.leave()
                     }
-                    group.leave()
+                } else {
+                    errorCount += 1
+                }
+
+            case .faceOnOnly:
+                // Export front/face-on camera only
+                if let frontURL = frontURL {
+                    group.enter()
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: frontURL)
+                    }) { success, _ in
+                        if success { exportedCount += 1 } else { errorCount += 1 }
+                        group.leave()
+                    }
+                } else if let remoteURL = remoteURL {
+                    // Fallback to remote if no front camera
+                    group.enter()
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: remoteURL)
+                    }) { success, _ in
+                        if success { exportedCount += 1 } else { errorCount += 1 }
+                        group.leave()
+                    }
+                } else {
+                    errorCount += 1
                 }
             }
         }
