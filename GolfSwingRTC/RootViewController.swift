@@ -37,13 +37,13 @@ final class RootViewController: UIViewController {
 
         // Sender button
         let senderButton = UIButton(type: .system)
-        senderButton.setTitle("Start as Sender (Camera)", for: .normal)
+        senderButton.setTitle("Start as Sender (Remote Camera)", for: .normal)
         senderButton.accessibilityIdentifier = "senderButton"
         senderButton.addTarget(self, action: #selector(startSender), for: .touchUpInside)
 
         // Receiver button
         let receiverButton = UIButton(type: .system)
-        receiverButton.setTitle("Start as Receiver (Viewer)", for: .normal)
+        receiverButton.setTitle("Start as Receiver (Local Camera and Viewer)", for: .normal)
         receiverButton.accessibilityIdentifier = "receiverButton"
         receiverButton.addTarget(self, action: #selector(startReceiver), for: .touchUpInside)
 

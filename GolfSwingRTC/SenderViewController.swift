@@ -31,6 +31,10 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
     private var preview: RTCMTLVideoView!
     private var statusLabel: UILabel?
     private var statusUpdateTimer: Timer?
+    private var cameraToggleButton: UIButton?
+
+    // MARK: - Camera Selection
+    private var isUsingFrontCamera = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -113,6 +117,25 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         ])
         statusLabel = label
         updateConnectionStatus("Searching for receiver...")
+
+        // Add camera toggle button
+        let toggleButton = UIButton(type: .system)
+        toggleButton.translatesAutoresizingMaskIntoConstraints = false
+        let config = UIImage.SymbolConfiguration(pointSize: 28, weight: .medium)
+        toggleButton.setImage(UIImage(systemName: "camera.rotate", withConfiguration: config), for: .normal)
+        toggleButton.tintColor = .white
+        toggleButton.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        toggleButton.layer.cornerRadius = 25
+        toggleButton.accessibilityIdentifier = "cameraToggleButton"
+        toggleButton.addTarget(self, action: #selector(cameraToggleTapped), for: .touchUpInside)
+        view.addSubview(toggleButton)
+        NSLayoutConstraint.activate([
+            toggleButton.widthAnchor.constraint(equalToConstant: 50),
+            toggleButton.heightAnchor.constraint(equalToConstant: 50),
+            toggleButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+            toggleButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20)
+        ])
+        cameraToggleButton = toggleButton
 
         print("Sender: setupPreview - preview frame: \(preview.frame)")
         print("Sender: setupPreview - preview ready; video track will attach after capture starts")
@@ -317,6 +340,76 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         }
     }
 
+    // MARK: - Camera Toggle
+
+    @objc private func cameraToggleTapped() {
+        isUsingFrontCamera.toggle()
+        print("Sender: Switching to \(isUsingFrontCamera ? "front" : "back") camera")
+        switchCamera()
+    }
+
+    private func switchCamera() {
+        // Stop current capture
+        capturer.stopCapture()
+        isCapturerRunning = false
+        isPreviewAttached = false
+
+        // Update preview mirror transform for front camera
+        updatePreviewMirror()
+
+        // Restart capture with new camera
+        let devices = RTCCameraVideoCapturer.captureDevices()
+        let targetPosition: AVCaptureDevice.Position = isUsingFrontCamera ? .front : .back
+        guard let device = devices.first(where: { $0.position == targetPosition }) ?? devices.first else {
+            print("Sender: No camera device found for position \(targetPosition.rawValue)")
+            return
+        }
+
+        print("Sender: Selected device: \(device.localizedName) (position: \(device.position.rawValue))")
+
+        let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
+        let format = formats.first { format in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let pixels = dimensions.width * dimensions.height
+            return pixels >= 1280 * 720 && pixels <= 1920 * 1080
+        } ?? formats.first { format in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return dimensions.width >= 640 && dimensions.height >= 480
+        } ?? formats.first!
+
+        let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        let fps = max(24, min(60, Int(format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30)))
+
+        print("Sender: Starting \(isUsingFrontCamera ? "front" : "back") camera capture: \(dimensions.width)x\(dimensions.height) @ \(fps)fps")
+
+        videoSource.adaptOutputFormat(toWidth: dimensions.width, height: dimensions.height, fps: Int32(fps))
+        capturer.startCapture(with: device, format: format, fps: fps)
+        isCapturerRunning = true
+        lastFrameTime = Date()
+        frameCount = 0
+
+        // Re-attach video track to preview
+        if let track = localVideoTrack {
+            track.add(preview)
+            isPreviewAttached = true
+            track.isEnabled = true
+        }
+
+        // Renegotiate WebRTC connection
+        hasSentInitialOffer = false
+        makeOffer()
+    }
+
+    private func updatePreviewMirror() {
+        if isUsingFrontCamera {
+            // Mirror horizontally so golfer sees themselves like a mirror
+            preview.transform = CGAffineTransform(scaleX: -1, y: 1)
+        } else {
+            // Normal orientation for back camera
+            preview.transform = .identity
+        }
+    }
+
     // MARK: - Video Track Maintenance
 
     private var lastFrameTime = Date()
@@ -367,7 +460,15 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         // Force preview refresh
         preview.setNeedsLayout()
         preview.layoutIfNeeded()
+
+        // Ensure UI elements stay on top of preview
         view.bringSubviewToFront(preview)
+        if let label = statusLabel {
+            view.bringSubviewToFront(label)
+        }
+        if let toggleBtn = cameraToggleButton {
+            view.bringSubviewToFront(toggleBtn)
+        }
     }
 
     private func restartVideoCapture() {
@@ -387,7 +488,8 @@ final class SenderViewController: UIViewController, RTCPeerConnectionDelegate, R
         print("Sender: Reinitializing video capture...")
 
         let devices = RTCCameraVideoCapturer.captureDevices()
-        guard let device = devices.first(where: { $0.position == .back }) ?? devices.first else {
+        let targetPosition: AVCaptureDevice.Position = isUsingFrontCamera ? .front : .back
+        guard let device = devices.first(where: { $0.position == targetPosition }) ?? devices.first else {
             print("Sender: No camera device found during restart!")
             return
         }

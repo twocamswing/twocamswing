@@ -39,6 +39,42 @@ final class GolfSwingRTCUITests: XCTestCase {
         sleep(5)
     }
 
+    /// Test sender camera toggle - waits 15 seconds then switches to front camera
+    /// Run with: xcodebuild test -only-testing:GolfSwingRTCUITests/GolfSwingRTCUITests/testSenderCameraToggle
+    func testSenderCameraToggle() {
+        app.launch()
+
+        let senderButton = app.buttons["senderButton"]
+        XCTAssertTrue(senderButton.waitForExistence(timeout: 5), "Sender button is not visible")
+        senderButton.tap()
+
+        // Wait for camera to initialize
+        sleep(5)
+
+        // Verify camera toggle button exists
+        let cameraToggle = app.buttons["cameraToggleButton"]
+        XCTAssertTrue(cameraToggle.waitForExistence(timeout: 10), "Camera toggle button should be visible")
+
+        // Wait 15 seconds as requested before toggling
+        print("Waiting 15 seconds before camera toggle...")
+        sleep(15)
+
+        // Toggle to front camera
+        XCTAssertTrue(cameraToggle.isHittable, "Camera toggle should be hittable")
+        cameraToggle.tap()
+        print("Switched to front camera")
+
+        // Hold for observation
+        sleep(10)
+
+        // Toggle back to rear camera
+        cameraToggle.tap()
+        print("Switched back to rear camera")
+
+        // Final hold
+        sleep(5)
+    }
+
     func testStartReceiverFlow() {
         app.launch()
 
